@@ -3,7 +3,8 @@
 
 #include <Arduino.h>
 
-// Flex sensor in a voltage divider:
+// Flex sensor used as the force sensor (stands in for the FSR) in a
+// voltage divider:
 // 5V -- flex sensor -- pin -- fixedResistance -- GND
 // Bend with the printed side on the outside of the curve.
 //
@@ -28,11 +29,26 @@ public:
     // Filtered ADC value (0-1023)
     float getADC() const;
 
+    // Most recent unfiltered ADC sample (0-1023)
+    int getRawADC() const;
+
     // Filtered sensor resistance in kOhm
     float readResistance() const;
 
-    // Bend mapped from resistance: straight = 0, max bend = 180 degrees
+    // Filtered sensor resistance in ohms
+    float getResistanceOhms() const;
+
+    // "Force" = bend normalised between the calibration points:
+    // straight (flat) = 0 %, fully bent = 100 %
+    float getForcePercent() const;
+
+    // Force mapped linearly to 0-180 degrees
     int getBendAngle() const;
+
+    // Calibration endpoints in ohms (bent must be > flat)
+    void setCalibration(float flatOhms, float bentOhms);
+    float getFlatOhms() const { return flatResistance; }
+    float getBentOhms() const { return bentResistance; }
 
 private:
     uint8_t pin;
@@ -46,6 +62,7 @@ private:
 
     int samples[MEDIAN_SIZE] = {0};
     int sampleIdx = 0;
+    int rawADC = 0;
     float smoothed = 0.0f;
 
     // Timing
@@ -53,7 +70,6 @@ private:
     unsigned long lastSample = 0;
 
     int median() const;
-    float resistanceOhms() const;
 };
 
 #endif
