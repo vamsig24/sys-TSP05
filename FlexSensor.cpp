@@ -26,6 +26,7 @@ void FlexSensor::begin() {
     }
 
     smoothed = analogRead(pin);
+    rawADC = (int)smoothed;
     lastSample = millis();
 }
 
@@ -59,7 +60,8 @@ void FlexSensor::update() {
     }
     lastSample = now;
 
-    samples[sampleIdx] = analogRead(pin);
+    rawADC = analogRead(pin);
+    samples[sampleIdx] = rawADC;
     sampleIdx = (sampleIdx + 1) % MEDIAN_SIZE;
 
     smoothed += EMA_ALPHA * (median() - smoothed);
@@ -69,7 +71,7 @@ void FlexSensor::update() {
 // Conversions
 // ====================================
 
-float FlexSensor::resistanceOhms() const {
+float FlexSensor::getResistanceOhms() const {
 
     // Avoid division by zero / negative resistance at the rails
     float adc = constrain(smoothed, 1.0f, 1022.0f);
@@ -82,15 +84,30 @@ float FlexSensor::getADC() const {
     return smoothed;
 }
 
+int FlexSensor::getRawADC() const {
+    return rawADC;
+}
+
 float FlexSensor::readResistance() const {
-    return resistanceOhms() / 1000.0f;
+    return getResistanceOhms() / 1000.0f;
+}
+
+float FlexSensor::getForcePercent() const {
+
+    float force =
+        (getResistanceOhms() - flatResistance) * 100.0f /
+        (bentResistance - flatResistance);
+
+    return constrain(force, 0.0f, 100.0f);
 }
 
 int FlexSensor::getBendAngle() const {
+    return (int)(getForcePercent() * 1.8f + 0.5f);
+}
 
-    float angle =
-        (resistanceOhms() - flatResistance) * 180.0f /
-        (bentResistance - flatResistance);
-
-    return constrain((int)angle, 0, 180);
+void FlexSensor::setCalibration(float flatOhms, float bentOhms) {
+    if (bentOhms > flatOhms) {
+        flatResistance = flatOhms;
+        bentResistance = bentOhms;
+    }
 }
