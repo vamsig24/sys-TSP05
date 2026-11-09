@@ -56,6 +56,8 @@ STATE_TOPICS = (
     ('dc_on', 'motors/dc/connected', Bool),
     ('dc_tgt', 'motors/dc/target_rpm', Float32),
     ('dc_rpm', 'motors/dc/rpm', Float32),
+    ('dc_pwm', 'motors/dc/pwm', Float32),
+    ('dc_pol', 'motors/dc/polarity', Int32),
 )
 
 
@@ -118,6 +120,9 @@ class TSP05SerialNode(Node):
         # y against x: x = filtered ADC, y = force %, z = servo target deg
         self.transfer_pub = self.create_publisher(
             Point, f'{prefix}/sensors/flex/transfer', 10)
+        # ToF -> DC: x = ToF distance cm, y = DC target rpm, z = measured rpm
+        self.dc_transfer_pub = self.create_publisher(
+            Point, f'{prefix}/motors/dc/transfer', 10)
 
         # Command subscribers
         self.create_subscription(
@@ -129,6 +134,12 @@ class TSP05SerialNode(Node):
         self.create_subscription(
             Float32, f'{prefix}/cmd/dc_rpm',
             lambda m: self.send(protocol.format_dc, m.data), 10)
+        self.create_subscription(
+            Float32, f'{prefix}/cmd/dc_pwm',
+            lambda m: self.send(protocol.format_dc_pwm, m.data), 10)
+        self.create_subscription(
+            String, f'{prefix}/cmd/dc_polarity',
+            lambda m: self.send(protocol.format_dc_polarity, m.data), 10)
         self.create_subscription(
             Float32, f'{prefix}/cmd/stepper_delta',
             lambda m: self.send(protocol.format_step, m.data), 10)
@@ -300,6 +311,9 @@ class TSP05SerialNode(Node):
         self.transfer_pub.publish(Point(
             x=float(msg['flex_adc']), y=float(msg['flex_force']),
             z=float(msg['flex_deg'])))
+        self.dc_transfer_pub.publish(Point(
+            x=float(msg['tof_cm']), y=float(msg['dc_tgt']),
+            z=float(msg['dc_rpm'])))
         self.state_json_pub.publish(
             String(data=line.decode('utf-8', errors='replace').strip()))
 

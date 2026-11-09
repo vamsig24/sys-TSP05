@@ -134,7 +134,7 @@
       "buttonText": "Set DC speed",
       "advancedView": true,
       "value": "{\n  \"data\": 40.0\n}",
-      "foxglovePanelTitle": "DC speed (RPM, -100..100) - motor not connected"
+      "foxglovePanelTitle": "DC speed (RPM, -100..100)"
     },
     "Markdown!cal_help": {
       "renderMode": "static",

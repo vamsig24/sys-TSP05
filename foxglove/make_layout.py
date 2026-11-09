@@ -132,7 +132,7 @@ step_plus = button('Publish!step_plus', 'Stepper', f'{P}/cmd/stepper_delta',
 step = button('Publish!step', 'Stepper relative move (deg)',
               f'{P}/cmd/stepper_delta', FLOAT, 90.0, 'Move stepper',
               editable=True)
-dc = button('Publish!dc', 'DC speed (RPM, -100..100) - motor not connected',
+dc = button('Publish!dc', 'DC speed (RPM, -100..100)',
             f'{P}/cmd/dc_rpm', FLOAT, 40.0, 'Set DC speed', editable=True)
 
 controls = column(

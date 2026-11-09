@@ -10,7 +10,7 @@ STATE = (
     '"pot_raw":1023,"pot_v":5.00,"pot_pct":100,"tof_ok":true,"tof_mm":133,'
     '"sharp_v":1.92,"sharp_cm":12,"sharp_st":"VALID","btn":false,"btn_n":0,'
     '"servo_deg":90,"step_deg":0.0,"step_tgt":0.0,"dc_on":false,'
-    '"dc_tgt":0.0,"dc_rpm":0.0}')
+    '"dc_tgt":0.0,"dc_rpm":0.0,"dc_pwm":0,"dc_pol":0}')
 
 
 class TestParse(unittest.TestCase):
@@ -69,6 +69,15 @@ class TestCommands(unittest.TestCase):
     def test_dc_and_step(self):
         self.assertEqual(protocol.format_dc(150), 'DC 100.0\n')
         self.assertEqual(protocol.format_step(-15), 'STEP -15.0\n')
+
+    def test_dc_pwm_and_polarity(self):
+        self.assertEqual(protocol.format_dc_pwm(90), 'DCPWM 90\n')
+        self.assertEqual(protocol.format_dc_pwm(-999), 'DCPWM -230\n')
+        self.assertEqual(protocol.format_dc_polarity('1 0'), 'DCPOL 1 0\n')
+        with self.assertRaises(ValueError):
+            protocol.format_dc_polarity('2 0')
+        with self.assertRaises(ValueError):
+            protocol.format_dc_polarity('1')
 
     def test_safety(self):
         self.assertEqual(protocol.format_safety(20), 'SAFETY 20\n')

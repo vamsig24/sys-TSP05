@@ -8,6 +8,8 @@
     tsp05 dc <rpm>           (GUI mode)
     tsp05 safety <cm>        (0 disables)
     tsp05 calibrate          guided flex (force sensor) calibration
+    tsp05 dctest [--forward yes|no]
+                             DC motor polarity + speed-control test (motor spins!)
 
 Requires tsp05_serial_node to be running (scripts/tsp05 starts it).
 """
@@ -59,6 +61,10 @@ class Client(Node):
             'step': self.create_publisher(
                 Float32, f'{PREFIX}/cmd/stepper_delta', 10),
             'dc': self.create_publisher(Float32, f'{PREFIX}/cmd/dc_rpm', 10),
+            'dc_pwm': self.create_publisher(
+                Float32, f'{PREFIX}/cmd/dc_pwm', 10),
+            'dc_pol': self.create_publisher(
+                String, f'{PREFIX}/cmd/dc_polarity', 10),
             'safety': self.create_publisher(
                 Float32, f'{PREFIX}/cmd/safety_threshold', 10),
             'cal': self.create_publisher(
@@ -106,14 +112,15 @@ class Client(Node):
             return None
 
         self.take_events()
-        if name in ('mode', 'cal'):
+        if name in ('mode', 'cal', 'dc_pol'):
             msg = String(data=str(value))
         else:
             msg = Float32(data=float(value))
         pub.publish(msg)
 
         cmd = {'mode': 'MODE', 'servo': 'SERVO', 'step': 'STEP',
-               'dc': 'DC', 'safety': 'SAFETY', 'cal': 'CAL'}[name]
+               'dc': 'DC', 'dc_pwm': 'DCPWM', 'dc_pol': 'DCPOL',
+               'safety': 'SAFETY', 'cal': 'CAL'}[name]
         while time.monotonic() < end:
             for event in self.take_events():
                 if event.get('t') == 'ack' and event.get('cmd') == cmd:
@@ -156,7 +163,7 @@ def status_line(s):
         f"pot {s['pot_pct']:3d}% | tof {tof:>5}cm | sharp {sharp:>9} | "
         f"btn {'X' if s['btn'] else '_'}{s['btn_n']:<3} | "
         f"servo {s['servo_deg']:3d}° step {s['step_deg']:6.1f}° "
-        f"dc {s['dc_tgt']:5.1f}")
+        f"dc {s['dc_tgt']:5.1f}->{s['dc_rpm']:5.1f}rpm pwm {s['dc_pwm']:4d}")
 
 
 # ----------------------------------------------------------------------
@@ -407,6 +414,10 @@ class Check:
         ack = self.c.send('dc', 40)
         self.record('DC command accepted', bool(ack and ack.get('ok')),
                     'target only, motor disabled' if not self.c.get()['dc_on'] else '')
+        if self.c.get()['dc_on']:
+            ok, got = dc_settle(self, 40.0)
+            self.record('DC holds 40 rpm', ok,
+                        f'measured {got:+.1f} (wrong sign? run: tsp05 dctest)')
         self.c.send('dc', 0)
 
     def sensor_mode(self):
@@ -460,6 +471,121 @@ class Check:
         for name, detail in failed:
             print(f'  {RED}FAIL{RESET} {name}' + (f' - {detail}' if detail else ''))
         return 1 if failed else 0
+
+
+# ----------------------------------------------------------------------
+# DC motor polarity + speed control test
+# ----------------------------------------------------------------------
+
+DC_TEST_PWM = 180   # motor needs ~140 to start
+DC_TEST_RPM = 30.0
+
+
+def dc_open_loop(chk, pwm):
+    """Run the motor open loop; returns the mean measured rpm (or None)."""
+    ack = chk.c.send('dc_pwm', pwm)
+    if not (ack and ack.get('ok')):
+        print(f"  {RED}DCPWM rejected: {(ack or {}).get('err', 'no reply')}{RESET}")
+        return None
+    chk.collect(0.8)                      # PWM ramps up (30 per 200 ms)
+    rpms = [x['dc_rpm'] for x in chk.collect(1.0)]
+    chk.collect(0.6)                      # Arduino stops it after 2 s
+    return sum(rpms) / len(rpms) if rpms else None
+
+
+def dc_settle(chk, target, timeout=4.0, tol_frac=0.2):
+    """Wait until the rpm stays within tolerance for 1 s."""
+    tol = max(abs(target) * tol_frac, 3.0)
+    end = time.monotonic() + timeout
+    good_since = None
+    last = None
+    while time.monotonic() < end:
+        s = chk.c.get()
+        if s is not last:
+            last = s
+            sys.stdout.write('\r     ' + status_line(s) + '  ')
+            sys.stdout.flush()
+            if abs(s['dc_rpm'] - target) <= tol:
+                good_since = good_since or time.monotonic()
+                if time.monotonic() - good_since >= 1.0:
+                    print()
+                    return True, s['dc_rpm']
+            else:
+                good_since = None
+        time.sleep(0.02)
+    print()
+    return False, chk.c.get()['dc_rpm']
+
+
+def dctest(client, forward):
+    chk = Check(client, interactive=sys.stdin.isatty())
+    print(f'{BOLD}DC motor test{RESET} - {YELLOW}the motor will spin, '
+          f'keep hands clear{RESET}')
+    s = client.get()
+    if not s['dc_on']:
+        print(f'{RED}DC motor is disabled in the firmware (DC_MOTOR_CONNECTED){RESET}')
+        return 1
+    original_mode = s['mode']
+    try:
+        if not chk.set_mode('GUI'):
+            chk.record('Switch to GUI mode', False)
+            return chk.summary()
+        if client.get()['safety']:
+            ok = chk.watch_until(
+                'Safety stop is active - clear the area in front of the Sharp',
+                lambda st, s0: not st['safety'])
+            if not ok:
+                chk.record('DC test', None, 'safety stop active')
+                return chk.summary()
+
+        pol = client.get()['dc_pol']
+        motor_inv, enc_inv = bool(pol & 1), bool(pol & 2)
+        print(f'\n1. Open loop, PWM +{DC_TEST_PWM} (polarity now: '
+              f'motor_invert={int(motor_inv)} encoder_invert={int(enc_inv)})')
+        rpm = dc_open_loop(chk, DC_TEST_PWM)
+        if rpm is None:
+            chk.record('Open-loop run', False)
+            return chk.summary()
+        spins = abs(rpm) >= 3.0
+        chk.record('Encoder sees the motor turning', spins, f'{rpm:+.1f} rpm')
+        if not spins:
+            print('     Check motor power, the driver wiring (ENA/IN1/IN2) and '
+                  'encoder A->D3, B->D4.')
+            return chk.summary()
+
+        if forward is None:
+            forward = chk.ask_yes('Did the motor turn in the FORWARD direction?')
+        if forward is None:
+            forward = True
+            print(f'  {YELLOW}No answer - keeping the current motor direction{RESET}')
+
+        if not forward:
+            motor_inv = not motor_inv
+            rpm = -rpm                    # flipping the motor flips the reading
+        if rpm < 0:
+            enc_inv = not enc_inv         # make forward read as positive rpm
+        ack = client.send('dc_pol', f'{int(motor_inv)} {int(enc_inv)}')
+        chk.record('Polarity saved', bool(ack and ack.get('ok')),
+                   f'motor_invert={int(motor_inv)} encoder_invert={int(enc_inv)}')
+        time.sleep(0.3)
+
+        print(f'\n2. Check: open loop +{DC_TEST_PWM} should now read positive')
+        rpm = dc_open_loop(chk, DC_TEST_PWM)
+        chk.record('+PWM gives +rpm', rpm is not None and rpm >= 3.0,
+                   f'{rpm:+.1f} rpm' if rpm is not None else '')
+
+        print('\n3. Closed-loop speed control')
+        for target in (DC_TEST_RPM, -DC_TEST_RPM, 0.0):
+            client.send('dc', target)
+            ok, got = dc_settle(chk, target)
+            chk.record(f'Holds {target:+.0f} rpm', ok, f'measured {got:+.1f}')
+        if forward is not False and chk.interactive:
+            chk.record('Forward at +rpm (seen)', chk.ask_yes(
+                'Did it spin forward first, then backward?'))
+    finally:
+        client.send('dc', 0)
+        chk.set_mode(original_mode)
+    return chk.summary()
 
 
 # ----------------------------------------------------------------------
@@ -522,6 +648,9 @@ def main(argv=None):
                        help='only the automatic checks (no prompts)')
     sub.add_parser('watch', help='live one-line view')
     sub.add_parser('calibrate', help='guided flex (force) calibration')
+    p = sub.add_parser('dctest', help='DC motor polarity + speed test')
+    p.add_argument('--forward', choices=['yes', 'no'],
+                   help='answer for "did it spin forward" (else asked)')
     p = sub.add_parser('mode')
     p.add_argument('value', choices=['gui', 'sensor', 'toggle', 'GUI', 'SENSOR', 'TOGGLE'])
     for name, help_text in (('servo', 'angle deg'), ('step', 'relative deg'),
@@ -541,6 +670,10 @@ def main(argv=None):
 
         if args.cmd == 'calibrate':
             return calibrate(client)
+
+        if args.cmd == 'dctest':
+            forward = None if args.forward is None else args.forward == 'yes'
+            return dctest(client, forward)
 
         if args.cmd == 'watch':
             print('Ctrl+C to stop')

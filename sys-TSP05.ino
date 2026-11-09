@@ -5,7 +5,7 @@
 //   FSR             -> replaced by FLEX sensor (A0) used as the force
 //                      sensor: force 0-100 % (calibrated) -> servo 0-180 deg
 //   Omron slot      -> replaced by POTENTIOMETER (A2) -> stepper angle
-//   VL53L1X (I2C)   -> DC motor target speed (DC motor not connected yet)
+//   VL53L1X (I2C)   -> DC motor target speed (encoder PI speed control)
 //   VL53L5CX matrix -> not available; SHARP IR (A1) is the safety sensor
 //   Hardware button (pin 2, debounced) -> GUI / SENSOR mode toggle
 //
@@ -23,6 +23,9 @@
 //       DC <rpm -100..100>         (GUI mode)
 //       STEP <delta deg>           (GUI mode, relative stepper move)
 //       SAFETY <cm>                (safety threshold, 0 = disabled)
+//       DCPWM <pwm -230..230>      (GUI mode, open-loop DC test, stops after 2 s)
+//       DCPOL <motor 0/1> <encoder 0/1>
+//                                  (DC polarity, saved in EEPROM)
 //       CAL FLAT | CAL BENT | CAL RESET
 //                                  (flex/force calibration, saved in EEPROM)
 // =====================================================================
@@ -42,10 +45,10 @@
 // ====================================
 
 // DC motor: ENA, IN1, IN2, Encoder A, Encoder B
-// Not connected yet. When it is, encoder A (pin 2) conflicts with the
-// button, so one of them must move before enabling it.
-const bool DC_MOTOR_CONNECTED = false;
-DCMotor dcMotor(6, 8, 7, 2, 3);
+// Encoder A must be an interrupt pin (2 or 3 on the Uno); B is only read
+// for direction. Pin 2 is the button, so A is on 3 and B on 4.
+const bool DC_MOTOR_CONNECTED = true;
+DCMotor dcMotor(6, 8, 7, 3, 4);
 
 // Stepper motor: DIR, STEP
 StepperMotor stepperMotor(13, 12);
@@ -91,7 +94,14 @@ const float STEPPER_SPEED = 400.0f;  // microsteps/second
 const float DC_NEAR_CM = 10.0f;      // at or below: stop
 const float DC_FAR_CM = 100.0f;      // at or above: max speed
 const float DC_MIN_RPM = 20.0f;
-const float DC_MAX_RPM = 80.0f;
+const float DC_MAX_RPM = 50.0f;      // motor tops out ~55 rpm at max PWM
+// The PI controller resets its integrator whenever the target changes, so
+// ignore small changes caused by ToF noise (otherwise it never settles)
+const float DC_TARGET_DEADBAND_RPM = 2.0f;
+// Default polarity (overridden by DCPOL, stored in EEPROM)
+const bool DC_MOTOR_INVERT = false;
+const bool DC_ENCODER_INVERT = false;
+const unsigned long DC_OPEN_LOOP_MS = 2000;   // open-loop test auto-stop
 
 // Safety interlock (Sharp IR, stands in for VL53L5CX)
 float safetyThresholdCm = 20.0f;     // 0 disables
@@ -111,6 +121,10 @@ Mode mode = MODE_GUI;
 int servoAngle = 90;
 float dcTargetRPM = 0.0f;
 float stepperTargetDeg = 0.0f;
+
+bool dcOpenLoop = false;
+int dcOpenLoopPWM = 0;
+unsigned long dcOpenLoopStart = 0;
 
 bool safetyActive = false;
 uint8_t safetyCloseCount = 0;
@@ -229,6 +243,7 @@ void setMode(Mode newMode) {
         stepperMotor.setTargetDegrees(stepperTargetDeg);
         dcTargetRPM = 0.0f;
     }
+    dcOpenLoop = false;
 
     sendEvent("mode_changed");
 }
@@ -306,6 +321,46 @@ void handleCalibration(char* arg) {
 }
 
 // ====================================
+// DC motor polarity in EEPROM
+// ====================================
+
+struct DcPolarity {
+    uint16_t magic;
+    uint8_t motorInverted;
+    uint8_t encoderInverted;
+};
+const uint16_t DC_POL_MAGIC = 0xDC05;
+const int DC_POL_ADDR = 32;
+
+void loadDcPolarity() {
+    DcPolarity pol;
+    EEPROM.get(DC_POL_ADDR, pol);
+    if (pol.magic == DC_POL_MAGIC) {
+        dcMotor.setInverted(pol.motorInverted, pol.encoderInverted);
+    } else {
+        dcMotor.setInverted(DC_MOTOR_INVERT, DC_ENCODER_INVERT);
+    }
+}
+
+void handleDcPolarity(char* arg) {
+    int m, e;
+    if (arg == nullptr || sscanf(arg, "%d %d", &m, &e) != 2 ||
+        m < 0 || m > 1 || e < 0 || e > 1) {
+        sendAck("DCPOL", false, "expected: DCPOL <0|1> <0|1>");
+        return;
+    }
+    // Stop first so the direction does not flip while running
+    dcOpenLoop = false;
+    dcTargetRPM = 0.0f;
+    dcMotor.setClosedLoop();
+    dcMotor.setTargetRPM(0.0f);
+    dcMotor.setInverted(m, e);
+    DcPolarity pol = {DC_POL_MAGIC, (uint8_t)m, (uint8_t)e};
+    EEPROM.put(DC_POL_ADDR, pol);
+    sendAck("DCPOL", true, "");
+}
+
+// ====================================
 // Safety interlock
 // ====================================
 
@@ -343,6 +398,7 @@ void updateSafety() {
             stepperTargetDeg = stepperMotor.getPositionDegrees();
             stepperMotor.setTargetDegrees(stepperTargetDeg);
             dcTargetRPM = 0.0f;
+            dcOpenLoop = false;
 
             sendEvent("safety_stop");
         }
@@ -397,7 +453,11 @@ void runSensorMode() {
     }
 
     // VL53L1X -> DC motor speed
-    dcTargetRPM = distanceToRPM();
+    float rpm = roundf(distanceToRPM());
+    if (fabs(rpm - dcTargetRPM) >= DC_TARGET_DEADBAND_RPM ||
+        (rpm == 0.0f && dcTargetRPM != 0.0f)) {
+        dcTargetRPM = rpm;
+    }
 }
 
 // ====================================
@@ -445,6 +505,11 @@ void handleCommand(char* line) {
         return;
     }
 
+    if (strcmp(line, "DCPOL") == 0) {
+        handleDcPolarity(arg);
+        return;
+    }
+
     if (strcmp(line, "SAFETY") == 0) {
         if (arg == nullptr) {
             sendAck("SAFETY", false, "missing argument");
@@ -457,6 +522,7 @@ void handleCommand(char* line) {
 
     bool isMotorCmd = strcmp(line, "SERVO") == 0 ||
                       strcmp(line, "DC") == 0 ||
+                      strcmp(line, "DCPWM") == 0 ||
                       strcmp(line, "STEP") == 0;
     if (!isMotorCmd) {
         sendAck(line, false, "unknown command");
@@ -480,7 +546,13 @@ void handleCommand(char* line) {
     if (strcmp(line, "SERVO") == 0) {
         writeServo((int)(value + 0.5f));
     } else if (strcmp(line, "DC") == 0) {
+        dcOpenLoop = false;
         dcTargetRPM = constrain(value, -100.0f, 100.0f);
+    } else if (strcmp(line, "DCPWM") == 0) {
+        dcOpenLoop = true;
+        dcOpenLoopPWM = constrain((int)value, -230, 230);
+        dcOpenLoopStart = millis();
+        dcTargetRPM = 0.0f;
     } else {  // STEP
         stepperTargetDeg += value;
         stepperMotor.setTargetDegrees(stepperTargetDeg);
@@ -558,7 +630,9 @@ bool writeStateField(int i) {
         case 24: field(F("flex_force")); Serial.print(flexSensor.getForcePercent(), 1); break;
         case 25: field(F("flex_flat_k")); Serial.print(flexSensor.getFlatOhms() / 1000.0f, 2); break;
         case 26: field(F("flex_bent_k")); Serial.print(flexSensor.getBentOhms() / 1000.0f, 2); break;
-        case 27: Serial.print("}\n"); break;
+        case 27: field(F("dc_pwm")); Serial.print(DC_MOTOR_CONNECTED ? dcMotor.getPWM() : 0); break;
+        case 28: field(F("dc_pol")); Serial.print((dcMotor.isMotorInverted() ? 1 : 0) + (dcMotor.isEncoderInverted() ? 2 : 0)); break;
+        case 29: Serial.print("}\n"); break;
         default: return false;
     }
     return true;
@@ -600,6 +674,7 @@ void setup() {
         dcMotor.begin();
         dcMotor.setPIDGains(1.0, 1.5);
         dcMotor.setTargetRPM(0);
+        loadDcPolarity();
     }
     stepperMotor.begin();
     stepperMotor.setSpeed(STEPPER_SPEED);
@@ -653,8 +728,18 @@ void loop() {
     if (safetyActive) {
         dcTargetRPM = 0.0f;
     }
+    if (dcOpenLoop && millis() - dcOpenLoopStart >= DC_OPEN_LOOP_MS) {
+        dcOpenLoop = false;   // open-loop test auto-stop
+    }
     if (DC_MOTOR_CONNECTED) {
-        dcMotor.setTargetRPM(dcTargetRPM);
+        if (dcOpenLoop) {
+            dcMotor.setOpenLoopPWM(dcOpenLoopPWM);
+        } else {
+            if (dcMotor.isOpenLoop()) {
+                dcMotor.setClosedLoop();
+            }
+            dcMotor.setTargetRPM(dcTargetRPM);
+        }
         dcMotor.update();
     }
     stepperMotor.update();
