@@ -29,7 +29,7 @@ STATE_FIELDS = (
     'sharp_v', 'sharp_cm', 'sharp_st',
     'btn', 'btn_n',
     'servo_deg', 'step_deg', 'step_tgt',
-    'dc_on', 'dc_tgt', 'dc_rpm',
+    'dc_on', 'dc_tgt', 'dc_rpm', 'dc_pwm', 'dc_pol',
 )
 
 
@@ -106,6 +106,21 @@ def format_dc(rpm):
     rpm = _finite(rpm, 'DC rpm')
     rpm = min(max(rpm, -100.0), 100.0)
     return f'DC {rpm:.1f}\n'
+
+
+def format_dc_pwm(pwm):
+    """Open-loop DC test (GUI mode); the Arduino stops it after 2 s."""
+    pwm = _finite(pwm, 'DC pwm')
+    pwm = min(max(pwm, -230.0), 230.0)
+    return f'DCPWM {pwm:.0f}\n'
+
+
+def format_dc_polarity(value):
+    """value: "<motor> <encoder>" with 0/1 each, e.g. "1 0"."""
+    parts = str(value).split()
+    if len(parts) != 2 or any(p not in ('0', '1') for p in parts):
+        raise ValueError(f'DC polarity must be "<0|1> <0|1>", got {value!r}')
+    return f'DCPOL {parts[0]} {parts[1]}\n'
 
 
 def format_step(delta_deg):

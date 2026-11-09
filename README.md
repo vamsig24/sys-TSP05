@@ -21,9 +21,9 @@ This follows the TSP05 demo-flow diagram, adapted to the hardware on the bench:
 | Hardware button | Push button to 5V, pull-down | 2 | GUI ↔ SENSOR mode toggle (debounced) |
 | RC servo | Servo | 10 | |
 | Stepper (EasyDriver) | Stepper | STEP 12, DIR 13 | |
-| DC motor + encoder | **Not connected yet** (`DC_MOTOR_CONNECTED = false`) | 6, 8, 7, enc 2/3 | |
+| DC motor + encoder | DC motor (L298) with encoder, PI speed control | ENA 6, IN1 8, IN2 7, enc A 3, enc B 4 | |
 
-The DC motor's encoder A input is pin 2, which the button now uses. Before setting `DC_MOTOR_CONNECTED = true`, move either the button or the encoder to a different pin.
+The DC motor's encoder A must be on an interrupt pin (2 or 3 on the Uno). Pin 2 is the button, so encoder A is on 3 and B on 4. Set `DC_MOTOR_CONNECTED = false` in `sys-TSP05.ino` to run without the motor.
 
 ### Modes
 
@@ -31,6 +31,32 @@ The DC motor's encoder A input is pin 2, which the button now uses. Before setti
 - **SENSOR**: motors follow the sensors as in the table above.
 - To switch, press the hardware button or publish to `/tsp05/cmd/mode`.
 - **Safety:** in both modes, an obstacle in front of the Sharp sensor closer than the threshold, for 2 readings in a row, stops all motors and blocks motor commands. It releases after 0.5 s with no obstacle. A threshold of `0` disables it.
+
+## Pinout
+
+![TSP05 Arduino Uno wiring](docs/pinout.svg)
+
+| Arduino pin | Connected to | Notes |
+|---|---|---|
+| **D0 / D1** | USB serial | ROS 2 link at 115200 baud. Don't use these for anything else. |
+| **D2** | Push button (mode toggle) | Button to 5V, 10 kΩ pull-down to GND; pressed = HIGH. |
+| **D3** | DC encoder channel A | Interrupt pin; counts rising edges. |
+| **D4** | DC encoder channel B | Read on each A edge for the direction. |
+| **D6** | DC driver ENA (PWM) | Speed. Motor power from the driver's own supply, GND common. |
+| **D7** | DC driver IN2 | Direction. |
+| **D8** | DC driver IN1 | Direction. |
+| **D10** | Servo signal | Servo V+ to 5V (use an external 5V supply if the board resets when it moves), GND common. |
+| **D12** | Stepper driver STEP | EasyDriver. Motor power from its own supply. |
+| **D13** | Stepper driver DIR | The on-board LED flickers with the direction; that's normal. |
+| **A0** | Flex sensor (force sensor) | Voltage divider: 5V – flex – **A0** – 10 kΩ – GND. |
+| **A1** | Sharp GP2Y0A21 IR, Vo | Vcc 5V, GND. A 10 µF capacitor across Vcc/GND is recommended. |
+| **A2** | Potentiometer wiper | Outer legs to 5V and GND. |
+| **A4 (SDA)** | VL53L1X SDA | I2C. These are the same pins as the SDA/SCL pins next to AREF. |
+| **A5 (SCL)** | VL53L1X SCL | Power the breakout as its board requires (most have a regulator and take 5V). |
+| 5V / GND | Sensor supplies | All grounds must be common: Arduino, servo supply, stepper driver, sensors. |
+| **Free** | D5, D9, D11, A3 | D9 and D10 can't do `analogWrite` PWM (the Servo library uses Timer1). |
+
+The diagram is generated from `docs/make_pinout.py`. Edit it and run `python3 docs/make_pinout.py` if the wiring changes.
 
 ## How to test
 

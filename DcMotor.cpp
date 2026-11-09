@@ -62,8 +62,12 @@ void DCMotor::encoderISR() {
         return;
     }
 
-    // Direction corrected based on previous test
-    if (digitalRead(instance->encoderBPin) == HIGH) {
+    // Direction corrected based on previous test; encoderInverted flips it
+    bool forward = digitalRead(instance->encoderBPin) == HIGH;
+    if (instance->encoderInverted) {
+        forward = !forward;
+    }
+    if (forward) {
         instance->encoderCount++;
     } else {
         instance->encoderCount--;
@@ -114,12 +118,15 @@ void DCMotor::setMotor(int pwm) {
 
     currentPWM += change;
 
-    if (currentPWM > 0) {
+    // Driver output; motorInverted swaps direction like swapping the wires
+    int out = motorInverted ? -currentPWM : currentPWM;
+
+    if (out > 0) {
 
         digitalWrite(in1Pin, HIGH);
         digitalWrite(in2Pin, LOW);
 
-    } else if (currentPWM < 0) {
+    } else if (out < 0) {
 
         digitalWrite(in1Pin, LOW);
         digitalWrite(in2Pin, HIGH);
@@ -130,7 +137,7 @@ void DCMotor::setMotor(int pwm) {
         digitalWrite(in2Pin, LOW);
     }
 
-    analogWrite(enaPin, abs(currentPWM));
+    analogWrite(enaPin, abs(out));
 }
 
 // ====================================
@@ -159,6 +166,13 @@ void DCMotor::update() {
         (pulses / PULSES_PER_REV) *
         (60.0f / dt);
 
+    // Open-loop test: fixed PWM, no controller
+    if (openLoop) {
+        integral = 0.0f;
+        setMotor(openLoopPWM);
+        return;
+    }
+
     // Stop command
     if (targetRPM == 0.0f) {
 
@@ -171,11 +185,41 @@ void DCMotor::update() {
     float error = targetRPM - measuredRPM;
 
     integral += error * dt;
-    integral = constrain(integral, -150.0f, 150.0f);
+    integral = constrain(integral, -30.0f, 30.0f);
 
-    float output = Kp * error + Ki * integral;
+    float ff = FF_OFFSET_PWM + fabs(targetRPM) * FF_PWM_PER_RPM;
+    if (fabs(measuredRPM) < STALL_RPM) {
+        ff = max(ff, KICK_PWM);   // break away from standstill
+        integral = 0.0f;
+    }
+    if (targetRPM < 0.0f) ff = -ff;
+
+    float output = ff + Kp * error + Ki * integral;
 
     setMotor((int)output);
+}
+
+// ====================================
+// Polarity and open-loop test
+// ====================================
+
+void DCMotor::setInverted(bool motorInv, bool encoderInv) {
+    noInterrupts();
+    encoderInverted = encoderInv;
+    interrupts();
+    motorInverted = motorInv;
+    integral = 0.0f;
+}
+
+void DCMotor::setOpenLoopPWM(int pwm) {
+    openLoop = true;
+    openLoopPWM = constrain(pwm, -MAX_PWM, MAX_PWM);
+}
+
+void DCMotor::setClosedLoop() {
+    openLoop = false;
+    openLoopPWM = 0;
+    integral = 0.0f;
 }
 
 // ====================================

@@ -7,6 +7,7 @@
 #   scripts/tsp05 mode gui|sensor|toggle
 #   scripts/tsp05 servo 90 | step 15 | dc 40 | safety 20
 #   scripts/tsp05 calibrate      guided flex (force sensor) calibration
+#   scripts/tsp05 dctest         DC motor polarity + speed test (motor spins!)
 #   scripts/tsp05 foxglove       start bridge + open Foxglove (then import the layout)
 #
 #   scripts/tsp05 flash          compile + upload the Arduino sketch
@@ -203,13 +204,13 @@ In Foxglove:
      $REPO/foxglove/tsp05_layout.json
 EOF2
         ;;
-    check|watch|mode|servo|step|dc|safety|calibrate)
+    check|watch|mode|servo|step|dc|dctest|safety|calibrate)
         ensure_container; ensure_built; start_bridge
         tty_flag=-i
         [ -t 0 ] && tty_flag=-it
         exec docker exec $tty_flag "$CONTAINER" bash -c "$ROS_ENV; ros2 run tsp05_bridge tsp05 $cmd $*" ;;
     help|-h|--help)
-        sed -n '2,22p' "$0" | sed 's/^# \{0,1\}//' ;;
+        sed -n '2,23p' "$0" | sed 's/^# \{0,1\}//' ;;
     *)
         die "unknown command '$cmd' (scripts/tsp05 help)" ;;
 esac
