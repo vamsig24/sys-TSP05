@@ -132,8 +132,10 @@ step_plus = button('Publish!step_plus', 'Stepper', f'{P}/cmd/stepper_delta',
 step = button('Publish!step', 'Stepper relative move (deg)',
               f'{P}/cmd/stepper_delta', FLOAT, 90.0, 'Move stepper',
               editable=True)
-dc = button('Publish!dc', 'DC speed (RPM, -100..100)',
-            f'{P}/cmd/dc_rpm', FLOAT, 40.0, 'Set DC speed', editable=True)
+dc = button('Publish!dc', 'DC speed (RPM, about 20..50 either way)',
+            f'{P}/cmd/dc_rpm', FLOAT, 30.0, 'Set DC speed', editable=True)
+dc_stop = button('Publish!dc_stop', 'DC motor', f'{P}/cmd/dc_rpm',
+                 FLOAT, 0.0, 'Stop DC motor', RED)
 
 controls = column(
     row(mode_gui, mode_sensor),
@@ -142,6 +144,7 @@ controls = column(
     row(step_minus, step_plus),
     step,
     dc,
+    dc_stop,
 )
 
 cal_help = panel(
@@ -202,7 +205,14 @@ servo_angle = gauge('Gauge!servo', 'Servo angle (deg)',
 stepper_angle = gauge('Gauge!stepper', 'Stepper angle (deg)',
                       f'{P}/motors/stepper/angle_deg.data', -360, 360, 90)
 dc_target = gauge('Gauge!dc', 'DC target speed (RPM)',
-                  f'{P}/motors/dc/target_rpm.data', -100, 100, 25)
+                  f'{P}/motors/dc/target_rpm.data', -60, 60, 10)
+dc_measured = gauge('Gauge!dc_rpm', 'DC measured speed (RPM)',
+                    f'{P}/motors/dc/rpm.data', -60, 60, 10)
+dc_stall = panel('Indicator!dc_stall', 'DC motor',
+                 path=f'{P}/motors/dc/stalled.data', style='bulb',
+                 fontSize=14, fallbackColor=GREEN, fallbackLabel='ok',
+                 rules=[dict(operator='=', rawValue='true', color=RED,
+                             label='STALLED - output cut')])
 button_count = panel('Indicator!button', 'Hardware button',
                      path=f'{P}/button/pressed.data', style='bulb',
                      fontSize=14, fallbackColor=GREY, fallbackLabel='released',
@@ -213,7 +223,8 @@ middle = column(
     row(force, pot),
     row(tof, sharp),
     row(servo_angle, stepper_angle),
-    row(dc_target, button_count),
+    row(dc_target, dc_measured),
+    row(dc_stall, button_count),
 )
 
 # ----------------------------------------------------------------------
@@ -251,10 +262,32 @@ motors = plot(
         series(f'{P}/motors/stepper/angle_deg.data', 'Stepper deg', GREEN),
         series(f'{P}/motors/stepper/target_deg.data', 'Stepper target deg',
                GREEN, lineStyle='dashed'),
-        series(f'{P}/motors/dc/target_rpm.data', 'DC target RPM', ORANGE),
-    ], 'deg / RPM')
+    ], 'deg')
 
-right = column(raw_vs_filtered, transfer, distances, motors)
+dc_speed = plot(
+    'Plot!dc_speed', 'DC motor speed', [
+        series(f'{P}/motors/dc/target_rpm.data', 'Target RPM', ORANGE,
+               lineStyle='dashed'),
+        series(f'{P}/motors/dc/rpm.data', 'Measured RPM', RED, lineSize=2),
+    ], 'RPM', -60, 60)
+
+dc_transfer = panel(
+    'Plot!dc_transfer', 'VL53L1X distance -> DC speed',
+    paths=[dict(value=f'{P}/motors/dc/transfer.y',
+                xValuePath=f'{P}/motors/dc/transfer.x',
+                label='target RPM', color=ORANGE, enabled=True,
+                showLine=False, timestampMethod='receiveTime'),
+           dict(value=f'{P}/motors/dc/transfer.z',
+                xValuePath=f'{P}/motors/dc/transfer.x',
+                label='measured RPM', color=RED, enabled=True,
+                showLine=False, timestampMethod='receiveTime')],
+    xAxisVal='custom', xAxisLabel='VL53L1X distance (cm)',
+    yAxisLabel='RPM', minXValue=0, maxXValue=150, minYValue=0, maxYValue=60,
+    showLegend=True, legendDisplay='floating',
+    floatingLegendPosition='top-left', showYAxisGridLines=True)
+
+right = column(raw_vs_filtered, transfer, distances, motors, dc_speed,
+               dc_transfer)
 
 layout = {
     'configById': config,

@@ -29,7 +29,7 @@ STATE_FIELDS = (
     'sharp_v', 'sharp_cm', 'sharp_st',
     'btn', 'btn_n',
     'servo_deg', 'step_deg', 'step_tgt',
-    'dc_on', 'dc_tgt', 'dc_rpm', 'dc_pwm', 'dc_pol',
+    'dc_on', 'dc_tgt', 'dc_rpm', 'dc_pwm', 'dc_pol', 'dc_stall',
 )
 
 

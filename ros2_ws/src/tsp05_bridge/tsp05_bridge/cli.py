@@ -163,7 +163,8 @@ def status_line(s):
         f"pot {s['pot_pct']:3d}% | tof {tof:>5}cm | sharp {sharp:>9} | "
         f"btn {'X' if s['btn'] else '_'}{s['btn_n']:<3} | "
         f"servo {s['servo_deg']:3d}° step {s['step_deg']:6.1f}° "
-        f"dc {s['dc_tgt']:5.1f}->{s['dc_rpm']:5.1f}rpm pwm {s['dc_pwm']:4d}")
+        f"dc {s['dc_tgt']:5.1f}->{s['dc_rpm']:5.1f}rpm pwm {s['dc_pwm']:4d}"
+        f"{' STALL' if s['dc_stall'] else ''}")
 
 
 # ----------------------------------------------------------------------
@@ -514,7 +515,11 @@ def dc_settle(chk, target, timeout=4.0, tol_frac=0.2):
                 good_since = None
         time.sleep(0.02)
     print()
-    return False, chk.c.get()['dc_rpm']
+    s = chk.c.get()
+    if s['dc_stall']:
+        print(f'     {RED}Motor stalled (driven, encoder sees no motion) - output '
+              f'cut. Check motor power / driver / encoder wiring.{RESET}')
+    return False, s['dc_rpm']
 
 
 def dctest(client, forward):
