@@ -548,6 +548,7 @@ void handleCommand(char* line) {
     } else if (strcmp(line, "DC") == 0) {
         dcOpenLoop = false;
         dcTargetRPM = constrain(value, -100.0f, 100.0f);
+        dcMotor.clearStall();   // explicit command = retry
     } else if (strcmp(line, "DCPWM") == 0) {
         dcOpenLoop = true;
         dcOpenLoopPWM = constrain((int)value, -230, 230);
@@ -632,7 +633,8 @@ bool writeStateField(int i) {
         case 26: field(F("flex_bent_k")); Serial.print(flexSensor.getBentOhms() / 1000.0f, 2); break;
         case 27: field(F("dc_pwm")); Serial.print(DC_MOTOR_CONNECTED ? dcMotor.getPWM() : 0); break;
         case 28: field(F("dc_pol")); Serial.print((dcMotor.isMotorInverted() ? 1 : 0) + (dcMotor.isEncoderInverted() ? 2 : 0)); break;
-        case 29: Serial.print("}\n"); break;
+        case 29: fieldBool(F("dc_stall"), DC_MOTOR_CONNECTED && dcMotor.isStalled()); break;
+        case 30: Serial.print("}\n"); break;
         default: return false;
     }
     return true;
@@ -741,6 +743,11 @@ void loop() {
             dcMotor.setTargetRPM(dcTargetRPM);
         }
         dcMotor.update();
+        static bool wasStalled = false;
+        if (dcMotor.isStalled() && !wasStalled) {
+            sendEvent("dc_stall");
+        }
+        wasStalled = dcMotor.isStalled();
     }
     stepperMotor.update();
 

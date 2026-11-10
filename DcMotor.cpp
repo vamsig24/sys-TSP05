@@ -87,6 +87,11 @@ void DCMotor::setTargetRPM(float rpm) {
         integral = 0.0f;
     }
 
+    // Stopping or reversing clears a stall
+    if (rpm == 0.0f || (rpm > 0.0f) != (targetRPM > 0.0f)) {
+        clearStall();
+    }
+
     targetRPM = rpm;
 }
 
@@ -173,10 +178,23 @@ void DCMotor::update() {
         return;
     }
 
-    // Stop command
-    if (targetRPM == 0.0f) {
+    // Stall protection: driven hard, no motion
+    if (!stalled && abs(currentPWM) >= STALL_PWM &&
+        fabs(measuredRPM) < STALL_RPM) {
+        if (stallStart == 0) {
+            stallStart = now;
+        } else if (now - stallStart >= STALL_TIMEOUT_MS) {
+            stalled = true;
+        }
+    } else if (fabs(measuredRPM) >= STALL_RPM) {
+        stallStart = 0;
+    }
+
+    // Stop command (or stalled)
+    if (targetRPM == 0.0f || stalled) {
 
         integral = 0.0f;
+        kickPWM = 0.0f;
         setMotor(0);
         return;
     }
@@ -189,8 +207,13 @@ void DCMotor::update() {
 
     float ff = FF_OFFSET_PWM + fabs(targetRPM) * FF_PWM_PER_RPM;
     if (fabs(measuredRPM) < STALL_RPM) {
-        ff = max(ff, KICK_PWM);   // break away from standstill
+        // Not turning: ramp up until it breaks away
+        kickPWM = (kickPWM == 0.0f) ? ff : kickPWM + KICK_STEP_PWM;
+        kickPWM = min(kickPWM, (float)MAX_PWM);
+        ff = max(ff, kickPWM);
         integral = 0.0f;
+    } else {
+        kickPWM = 0.0f;
     }
     if (targetRPM < 0.0f) ff = -ff;
 
@@ -214,6 +237,11 @@ void DCMotor::setInverted(bool motorInv, bool encoderInv) {
 void DCMotor::setOpenLoopPWM(int pwm) {
     openLoop = true;
     openLoopPWM = constrain(pwm, -MAX_PWM, MAX_PWM);
+}
+
+void DCMotor::clearStall() {
+    stalled = false;
+    stallStart = 0;
 }
 
 void DCMotor::setClosedLoop() {

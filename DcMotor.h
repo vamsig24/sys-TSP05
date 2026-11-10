@@ -43,6 +43,12 @@ public:
     // PWM currently applied (logical sign, before motor inversion)
     int getPWM() const { return currentPWM; }
 
+    // Stall protection (closed loop): if the motor is driven near full power but the
+    // encoder sees no motion for STALL_TIMEOUT_MS, the output is cut.
+    // Cleared by clearStall(), a zero target or a direction change.
+    bool isStalled() const { return stalled; }
+    void clearStall();
+
 private:
     // Motor driver pins
     uint8_t enaPin;
@@ -73,17 +79,27 @@ private:
     float measuredRPM = 0.0f;
 
     float Kp = 1.5f;
-    float Ki = 3.0f;
+    float Ki = 5.0f;
 
     // Feedforward: pwm = sign * (FF_OFFSET_PWM + |rpm| * FF_PWM_PER_RPM),
-    // fitted to the TSP05 motor once it is turning (PWM 80 ~ 21 rpm,
-    // 100 ~ 32 rpm, 120 ~ 38 rpm, flat ~50 rpm above 160). From standstill
-    // it needs ~140 to break away, so KICK_PWM is used until it moves.
-    // The PI loop corrects the rest.
-    static constexpr float FF_OFFSET_PWM = 55.0f;
-    static constexpr float FF_PWM_PER_RPM = 1.6f;
-    static constexpr float KICK_PWM = 150.0f;
+    // fitted to the TSP05 motor on its fixed supply (2026-11-09):
+    // 30 rpm ~ PWM 65, 60 rpm ~ PWM 95, 90 rpm ~ PWM 135, saturates
+    // ~115 rpm above PWM 180. The PI loop corrects the rest.
+    static constexpr float FF_OFFSET_PWM = 30.0f;
+    static constexpr float FF_PWM_PER_RPM = 1.1f;
+
+    // Breakaway: while the motor is not turning, the output ramps up from
+    // the feedforward by KICK_STEP_PWM per sample until it moves (the force
+    // needed differs per direction and supply). If it is still not turning
+    // at STALL_PWM or more for STALL_TIMEOUT_MS, it is stalled.
+    static constexpr float KICK_STEP_PWM = 15.0f;
+    static constexpr int STALL_PWM = 200;
+    float kickPWM = 0.0f;
     static constexpr float STALL_RPM = 3.0f;
+    static constexpr unsigned long STALL_TIMEOUT_MS = 1500;
+
+    bool stalled = false;
+    unsigned long stallStart = 0;   // 0 = not stalling
 
     float integral = 0.0f;
 

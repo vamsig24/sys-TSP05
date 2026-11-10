@@ -58,6 +58,7 @@ STATE_TOPICS = (
     ('dc_rpm', 'motors/dc/rpm', Float32),
     ('dc_pwm', 'motors/dc/pwm', Float32),
     ('dc_pol', 'motors/dc/polarity', Int32),
+    ('dc_stall', 'motors/dc/stalled', Bool),
 )
 
 

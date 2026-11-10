@@ -16,7 +16,7 @@ This follows the TSP05 demo-flow diagram, adapted to the hardware on the bench:
 |---|---|---|---|
 | FSR (force) | Flex sensor as the force sensor (5V–flex–A0–10k–GND) | A0 | **Servo**: force 0–100 % (calibrated straight → fully bent, saved in EEPROM) → 0–180°, with median + EMA filter, 10° deadzone and 5° deadband (from `vamsi/servo-flex-integrated`) |
 | Omron slot sensor | Potentiometer | A2 | **Stepper**: 0–100 % → 0–360°, 3° deadband |
-| VL53L1X | VL53L1X | I2C (A4/A5) | **DC motor** target speed: ≤10 cm → 0, 10–100 cm → 20–80 RPM |
+| VL53L1X | VL53L1X | I2C (A4/A5) | **DC motor** target speed: ≤10 cm → 0, 10–100 cm → 20–50 RPM (linear) |
 | VL53L5CX (safety) | Sharp GP2Y0A21 IR (no VL53L5CX) | A1 | **Safety stop**: obstacle closer than 20 cm stops all motors |
 | Hardware button | Push button to 5V, pull-down | 2 | GUI ↔ SENSOR mode toggle (debounced) |
 | RC servo | Servo | 10 | |
@@ -24,6 +24,13 @@ This follows the TSP05 demo-flow diagram, adapted to the hardware on the bench:
 | DC motor + encoder | DC motor (L298) with encoder, PI speed control | ENA 6, IN1 8, IN2 7, enc A 3, enc B 4 | |
 
 The DC motor's encoder A must be on an interrupt pin (2 or 3 on the Uno). Pin 2 is the button, so encoder A is on 3 and B on 4. Set `DC_MOTOR_CONNECTED = false` in `sys-TSP05.ino` to run without the motor.
+
+### DC motor notes
+
+- **Measured speed range:** the motor needs about PWM 140 to start, runs at about 20 RPM (PWM 80) to 50 RPM (PWM 160+), and doesn't go much faster. That is why the ToF range maps to 20–50 RPM. Targets under about 20 RPM may stall.
+- **Speed control:** feedforward (`PWM = 30 + 1.1·RPM`, from the measured curve) plus PI. From standstill the output ramps up until the motor breaks away. The constants are in `DcMotor.h`.
+- **Stall protection:** if it is driven at PWM ≥ 200 and the encoder sees no motion for 1.5 s, the output is cut. The firmware sends a `dc_stall` event and Foxglove shows *STALLED*. A new `DC` command, stopping, or reversing clears it.
+- **Polarity:** positive PWM must read as positive RPM, or the speed loop runs away. `scripts/tsp05 dctest` spins the motor, asks if it turned forward, and saves the motor/encoder inversion on the Arduino (EEPROM). It then checks the speed loop at +30, −30 and 0 RPM.
 
 ### Modes
 
@@ -88,8 +95,8 @@ This starts everything and opens Foxglove. In Foxglove:
 
 The layout follows the design image:
 - **Left:** mode and safety indicators, *GUI mode* / *SENSOR mode* buttons. Tabs hold the motor controls (servo angle, stepper ±15° or any angle, DC speed) and force-sensor calibration buttons. The Arduino's replies are shown below, so you can see when a command was rejected.
-- **Middle:** live gauges for force, potentiometer, both distance sensors, servo, stepper, DC target and the button.
-- **Right:** force sensor raw vs filtered, force transfer function (force % vs ADC), distances with the safety threshold, and motor positions.
+- **Middle:** live gauges for force, potentiometer, both distance sensors, servo, stepper, DC target and measured speed, a DC stall light and the button.
+- **Right:** force sensor raw vs filtered, force transfer function (force % vs ADC), distances with the safety threshold, motor positions, DC target vs measured speed, and VL53L1X distance → DC speed (XY).
 
 To edit the layout, change `foxglove/make_layout.py` and run it again.
 
@@ -101,7 +108,8 @@ To edit the layout, change `foxglove/make_layout.py` and run it again.
 | `scripts/tsp05 watch` | to see all readings live in the terminal (Ctrl+C to stop) |
 | `scripts/tsp05 stop` | to free the port for the Arduino IDE |
 | `scripts/tsp05 mode sensor` / `mode gui` | switch mode |
-| `scripts/tsp05 servo 90` / `step 15` | move a motor (GUI mode only) |
+| `scripts/tsp05 servo 90` / `step 15` / `dc 30` | move a motor (GUI mode only) |
+| `scripts/tsp05 dctest` | DC motor direction + speed-control test (**the motor spins**) |
 
 Everything below is reference detail; you don't need it to test.
 
@@ -188,7 +196,9 @@ All topics are under `/tsp05` and use `std_msgs`. Invalid distances are publishe
 | `sensors/sharp/{voltage, distance_cm}`, `valid`, `status` | Float32, Bool, String | |
 | `button/pressed`, `button/count` | Bool, Int32 | |
 | `motors/servo/angle_deg`, `motors/stepper/{angle_deg, target_deg}` | Float32 | |
-| `motors/dc/{connected, target_rpm, rpm}` | Bool, Float32 | |
+| `motors/dc/{connected, target_rpm, rpm, pwm}` | Bool, Float32 | |
+| `motors/dc/polarity`, `motors/dc/stalled` | Int32, Bool | polarity bit0 = motor inverted, bit1 = encoder inverted |
+| `motors/dc/transfer` | geometry_msgs/Point | x = VL53L1X cm, y = target RPM, z = measured RPM (for the XY plot) |
 | `events` | String | JSON acks / events from the Arduino |
 | `state_json` | String | full state line (10 Hz) |
 
@@ -200,6 +210,8 @@ All topics are under `/tsp05` and use `std_msgs`. Invalid distances are publishe
 | `cmd/servo_angle` | Float32 | 0–180°, GUI mode only |
 | `cmd/stepper_delta` | Float32 | relative degrees, GUI mode only |
 | `cmd/dc_rpm` | Float32 | −100…100, GUI mode only |
+| `cmd/dc_pwm` | Float32 | open-loop test PWM −230…230, GUI mode only, stops after 2 s |
+| `cmd/dc_polarity` | String | `"<motor 0/1> <encoder 0/1>"`, saved on the Arduino |
 | `cmd/safety_threshold` | Float32 | cm, `0` disables |
 | `cmd/flex_calibrate` | String | `FLAT`, `BENT`, `RESET` |
 
@@ -208,7 +220,7 @@ Commands sent in the wrong mode, or while the safety stop is active, are rejecte
 ## Serial protocol
 
 The Arduino sends one JSON object per line, with `"t"` set to `boot`, `state` (10 Hz), `ack` or `event`. The host sends text commands:
-`MODE GUI|SENSOR|TOGGLE`, `SERVO <deg>`, `DC <rpm>`, `STEP <deg>`, `SAFETY <cm>`, `CAL FLAT|BENT|RESET`.
+`MODE GUI|SENSOR|TOGGLE`, `SERVO <deg>`, `DC <rpm>`, `STEP <deg>`, `SAFETY <cm>`, `CAL FLAT|BENT|RESET`, `DCPWM <pwm>`, `DCPOL <m> <e>`.
 The parser and command formatting are in `ros2_ws/src/tsp05_bridge/tsp05_bridge/protocol.py`.
 
 Protocol unit tests (no ROS or hardware needed):

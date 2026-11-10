@@ -133,8 +133,17 @@
       "datatype": "std_msgs/msg/Float32",
       "buttonText": "Set DC speed",
       "advancedView": true,
-      "value": "{\n  \"data\": 40.0\n}",
-      "foxglovePanelTitle": "DC speed (RPM, -100..100)"
+      "value": "{\n  \"data\": 30.0\n}",
+      "foxglovePanelTitle": "DC speed (RPM, about 20..50 either way)"
+    },
+    "Publish!dc_stop": {
+      "topicName": "/tsp05/cmd/dc_rpm",
+      "datatype": "std_msgs/msg/Float32",
+      "buttonText": "Stop DC motor",
+      "advancedView": false,
+      "value": "{\n  \"data\": 0.0\n}",
+      "buttonColor": "#e53935",
+      "foxglovePanelTitle": "DC motor"
     },
     "Markdown!cal_help": {
       "renderMode": "static",
@@ -240,16 +249,21 @@
                   "second": {
                     "direction": "column",
                     "first": "Publish!step",
-                    "second": "Publish!dc",
-                    "splitPercentage": 50.0
+                    "second": {
+                      "direction": "column",
+                      "first": "Publish!dc",
+                      "second": "Publish!dc_stop",
+                      "splitPercentage": 50.0
+                    },
+                    "splitPercentage": 33.333333333333336
                   },
-                  "splitPercentage": 33.333333333333336
+                  "splitPercentage": 25.0
                 },
-                "splitPercentage": 25.0
+                "splitPercentage": 20.0
               },
-              "splitPercentage": 20.0
+              "splitPercentage": 16.666666666666668
             },
-            "splitPercentage": 16.666666666666668
+            "splitPercentage": 14.285714285714286
           }
         },
         {
@@ -364,15 +378,44 @@
     "Gauge!dc": {
       "path": "/tsp05/motors/dc/target_rpm.data",
       "style": "dial",
-      "minValue": -100,
-      "maxValue": 100,
-      "tickInterval": 25,
+      "minValue": -60,
+      "maxValue": 60,
+      "tickInterval": 10,
       "showTicks": true,
       "colorMode": "colormap",
       "colorMap": "turbo",
       "reverse": false,
       "reverseDirection": false,
       "foxglovePanelTitle": "DC target speed (RPM)"
+    },
+    "Gauge!dc_rpm": {
+      "path": "/tsp05/motors/dc/rpm.data",
+      "style": "dial",
+      "minValue": -60,
+      "maxValue": 60,
+      "tickInterval": 10,
+      "showTicks": true,
+      "colorMode": "colormap",
+      "colorMap": "turbo",
+      "reverse": false,
+      "reverseDirection": false,
+      "foxglovePanelTitle": "DC measured speed (RPM)"
+    },
+    "Indicator!dc_stall": {
+      "path": "/tsp05/motors/dc/stalled.data",
+      "style": "bulb",
+      "fontSize": 14,
+      "fallbackColor": "#43a047",
+      "fallbackLabel": "ok",
+      "rules": [
+        {
+          "operator": "=",
+          "rawValue": "true",
+          "color": "#e53935",
+          "label": "STALLED - output cut"
+        }
+      ],
+      "foxglovePanelTitle": "DC motor"
     },
     "Indicator!button": {
       "path": "/tsp05/button/pressed.data",
@@ -505,13 +548,6 @@
           "enabled": true,
           "timestampMethod": "receiveTime",
           "lineStyle": "dashed"
-        },
-        {
-          "value": "/tsp05/motors/dc/target_rpm.data",
-          "label": "DC target RPM",
-          "color": "#fb8c00",
-          "enabled": true,
-          "timestampMethod": "receiveTime"
         }
       ],
       "xAxisVal": "timestamp",
@@ -522,9 +558,76 @@
       "floatingLegendPosition": "top-left",
       "showPlotValuesInLegend": true,
       "isSynced": true,
-      "yAxisLabel": "deg / RPM",
+      "yAxisLabel": "deg",
       "showYAxisGridLines": true,
       "foxglovePanelTitle": "Motors"
+    },
+    "Plot!dc_speed": {
+      "paths": [
+        {
+          "value": "/tsp05/motors/dc/target_rpm.data",
+          "label": "Target RPM",
+          "color": "#fb8c00",
+          "enabled": true,
+          "timestampMethod": "receiveTime",
+          "lineStyle": "dashed"
+        },
+        {
+          "value": "/tsp05/motors/dc/rpm.data",
+          "label": "Measured RPM",
+          "color": "#e53935",
+          "enabled": true,
+          "timestampMethod": "receiveTime",
+          "lineSize": 2
+        }
+      ],
+      "xAxisVal": "timestamp",
+      "timeWindowMode": "sliding",
+      "followingViewWidth": 30,
+      "showLegend": true,
+      "legendDisplay": "floating",
+      "floatingLegendPosition": "top-left",
+      "showPlotValuesInLegend": true,
+      "isSynced": true,
+      "yAxisLabel": "RPM",
+      "showYAxisGridLines": true,
+      "minYValue": -60,
+      "maxYValue": 60,
+      "foxglovePanelTitle": "DC motor speed"
+    },
+    "Plot!dc_transfer": {
+      "paths": [
+        {
+          "value": "/tsp05/motors/dc/transfer.y",
+          "xValuePath": "/tsp05/motors/dc/transfer.x",
+          "label": "target RPM",
+          "color": "#fb8c00",
+          "enabled": true,
+          "showLine": false,
+          "timestampMethod": "receiveTime"
+        },
+        {
+          "value": "/tsp05/motors/dc/transfer.z",
+          "xValuePath": "/tsp05/motors/dc/transfer.x",
+          "label": "measured RPM",
+          "color": "#e53935",
+          "enabled": true,
+          "showLine": false,
+          "timestampMethod": "receiveTime"
+        }
+      ],
+      "xAxisVal": "custom",
+      "xAxisLabel": "VL53L1X distance (cm)",
+      "yAxisLabel": "RPM",
+      "minXValue": 0,
+      "maxXValue": 150,
+      "minYValue": 0,
+      "maxYValue": 60,
+      "showLegend": true,
+      "legendDisplay": "floating",
+      "floatingLegendPosition": "top-left",
+      "showYAxisGridLines": true,
+      "foxglovePanelTitle": "VL53L1X distance -> DC speed"
     }
   },
   "globalVariables": {},
@@ -582,16 +685,26 @@
               "splitPercentage": 50.0
             },
             "second": {
-              "direction": "row",
-              "first": "Gauge!dc",
-              "second": "Indicator!button",
+              "direction": "column",
+              "first": {
+                "direction": "row",
+                "first": "Gauge!dc",
+                "second": "Gauge!dc_rpm",
+                "splitPercentage": 50.0
+              },
+              "second": {
+                "direction": "row",
+                "first": "Indicator!dc_stall",
+                "second": "Indicator!button",
+                "splitPercentage": 50.0
+              },
               "splitPercentage": 50.0
             },
-            "splitPercentage": 50.0
+            "splitPercentage": 33.333333333333336
           },
-          "splitPercentage": 33.333333333333336
+          "splitPercentage": 25.0
         },
-        "splitPercentage": 25.0
+        "splitPercentage": 20.0
       },
       "second": {
         "direction": "column",
@@ -602,12 +715,22 @@
           "second": {
             "direction": "column",
             "first": "Plot!distances",
-            "second": "Plot!motors",
-            "splitPercentage": 50.0
+            "second": {
+              "direction": "column",
+              "first": "Plot!motors",
+              "second": {
+                "direction": "column",
+                "first": "Plot!dc_speed",
+                "second": "Plot!dc_transfer",
+                "splitPercentage": 50.0
+              },
+              "splitPercentage": 33.333333333333336
+            },
+            "splitPercentage": 25.0
           },
-          "splitPercentage": 33.333333333333336
+          "splitPercentage": 20.0
         },
-        "splitPercentage": 25.0
+        "splitPercentage": 16.666666666666668
       },
       "splitPercentage": 42
     },

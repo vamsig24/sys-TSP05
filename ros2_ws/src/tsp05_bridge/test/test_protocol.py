@@ -10,7 +10,7 @@ STATE = (
     '"pot_raw":1023,"pot_v":5.00,"pot_pct":100,"tof_ok":true,"tof_mm":133,'
     '"sharp_v":1.92,"sharp_cm":12,"sharp_st":"VALID","btn":false,"btn_n":0,'
     '"servo_deg":90,"step_deg":0.0,"step_tgt":0.0,"dc_on":false,'
-    '"dc_tgt":0.0,"dc_rpm":0.0,"dc_pwm":0,"dc_pol":0}')
+    '"dc_tgt":0.0,"dc_rpm":0.0,"dc_pwm":0,"dc_pol":0,"dc_stall":false}')
 
 
 class TestParse(unittest.TestCase):
