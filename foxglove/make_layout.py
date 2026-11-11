@@ -134,6 +134,8 @@ step = button('Publish!step', 'Stepper relative move (deg)',
               editable=True)
 dc = button('Publish!dc', 'DC speed (RPM, about 20..50 either way)',
             f'{P}/cmd/dc_rpm', FLOAT, 30.0, 'Set DC speed', editable=True)
+dc_deg = button('Publish!dc_deg', 'DC relative move (deg, PID on encoder)',
+                f'{P}/cmd/dc_deg', FLOAT, 90.0, 'Move DC motor', editable=True)
 dc_stop = button('Publish!dc_stop', 'DC motor', f'{P}/cmd/dc_rpm',
                  FLOAT, 0.0, 'Stop DC motor', RED)
 
@@ -144,6 +146,7 @@ controls = column(
     row(step_minus, step_plus),
     step,
     dc,
+    dc_deg,
     dc_stop,
 )
 
@@ -192,10 +195,10 @@ left = split('column',
 # Middle: live readings
 # ----------------------------------------------------------------------
 
-force = gauge('Gauge!force', 'Force (flex) %', f'{P}/sensors/flex/force_pct.data',
-              0, 100, 10, 'red-yellow-green')
-pot = gauge('Gauge!pot', 'Potentiometer %', f'{P}/sensors/pot/position_pct.data',
-            0, 100, 10)
+force = gauge('Gauge!force', 'Flex bend angle (deg)', f'{P}/sensors/flex/angle_deg.data',
+              0, 120, 15, 'red-yellow-green')
+pot = gauge('Gauge!pot', 'Potentiometer angle (deg)', f'{P}/sensors/pot/angle_deg.data',
+            0, 270, 45)
 tof = gauge('Gauge!tof', 'VL53L1X distance (cm)',
             f'{P}/sensors/tof/distance_cm.data', 0, 200, 20)
 sharp = gauge('Gauge!sharp', 'Sharp IR distance (cm)',
@@ -239,13 +242,13 @@ raw_vs_filtered = plot(
     ], 'ADC (0-1023)')
 
 transfer = panel(
-    'Plot!transfer', 'Force transfer function (ADC -> force %)',
+    'Plot!transfer', 'Flex transfer function (bend angle -> ADC)',
     paths=[dict(value=f'{P}/sensors/flex/transfer.y',
                 xValuePath=f'{P}/sensors/flex/transfer.x',
-                label='force % vs ADC', color=ORANGE, enabled=True,
+                label='ADC vs bend angle', color=ORANGE, enabled=True,
                 showLine=False, timestampMethod='receiveTime')],
-    xAxisVal='custom', xAxisLabel='Filtered ADC', yAxisLabel='Force %',
-    minYValue=0, maxYValue=100, showLegend=True, legendDisplay='floating',
+    xAxisVal='custom', xAxisLabel='Bend angle (deg)', yAxisLabel='Filtered ADC',
+    minXValue=0, maxXValue=120, minYValue=0, maxYValue=1023, showLegend=True, legendDisplay='floating',
     floatingLegendPosition='top-left', showYAxisGridLines=True)
 
 distances = plot(
@@ -262,6 +265,9 @@ motors = plot(
         series(f'{P}/motors/stepper/angle_deg.data', 'Stepper deg', GREEN),
         series(f'{P}/motors/stepper/target_deg.data', 'Stepper target deg',
                GREEN, lineStyle='dashed'),
+        series(f'{P}/motors/dc/angle_deg.data', 'DC deg', RED),
+        series(f'{P}/motors/dc/target_deg.data', 'DC target deg', RED,
+               lineStyle='dashed'),
     ], 'deg')
 
 dc_speed = plot(

@@ -15,8 +15,17 @@ public:
 
     void begin();
 
-    // Command speed in RPM (-100 to 100)
+    // Command speed in RPM (-100 to 100). Leaves position mode.
     void setTargetRPM(float rpm);
+
+    // Position control: move `degrees` (output shaft) from the current
+    // position. A P loop on the encoder position commands the PI speed loop
+    // (cascade); it holds until a new target or setTargetRPM()/cancelPosition().
+    void moveDegrees(float degrees);
+    void cancelPosition();
+    bool isPositionMode() const { return positionMode; }
+    float getPositionDeg() const;
+    float getTargetDeg() const { return targetDeg; }
 
     // Call repeatedly from loop()
     void update();
@@ -77,6 +86,16 @@ private:
     // PI controller
     float targetRPM = 0.0f;
     float measuredRPM = 0.0f;
+
+    // Position control (outer loop)
+    long positionCount = 0;          // accumulated encoder pulses
+    bool positionMode = false;
+    float targetDeg = 0.0f;
+    static constexpr float POS_KP = 0.3f;          // RPM per degree of error
+    static constexpr float POS_MAX_RPM = 20.0f;
+    static constexpr float POS_MIN_RPM = 5.0f;     // overcome friction near target
+    static constexpr float POS_TOLERANCE_DEG = 4.0f;
+    void positionControl();
 
     float Kp = 1.5f;
     float Ki = 5.0f;

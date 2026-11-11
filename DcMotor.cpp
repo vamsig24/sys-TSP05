@@ -80,6 +80,7 @@ void DCMotor::encoderISR() {
 
 void DCMotor::setTargetRPM(float rpm) {
 
+    positionMode = false;
     rpm = constrain(rpm, -100.0f, 100.0f);
 
     // Reset integrator when target changes
@@ -166,6 +167,8 @@ void DCMotor::update() {
     encoderCount = 0;
     interrupts();
 
+    positionCount += pulses;
+
     // Calculate signed RPM
     measuredRPM =
         (pulses / PULSES_PER_REV) *
@@ -188,6 +191,10 @@ void DCMotor::update() {
         }
     } else if (fabs(measuredRPM) >= STALL_RPM) {
         stallStart = 0;
+    }
+
+    if (positionMode) {
+        positionControl();
     }
 
     // Stop command (or stalled)
@@ -220,6 +227,55 @@ void DCMotor::update() {
     float output = ff + Kp * error + Ki * integral;
 
     setMotor((int)output);
+}
+
+// ====================================
+// Position control
+// ====================================
+
+float DCMotor::getPositionDeg() const {
+    noInterrupts();
+    long count = positionCount + encoderCount;
+    interrupts();
+    return count * 360.0f / PULSES_PER_REV;
+}
+
+void DCMotor::moveDegrees(float degrees) {
+    targetDeg = getPositionDeg() + degrees;
+    positionMode = true;
+    openLoop = false;
+    clearStall();
+}
+
+void DCMotor::cancelPosition() {
+    if (positionMode) {
+        positionMode = false;
+        targetRPM = 0.0f;
+        integral = 0.0f;
+    }
+}
+
+// Outer loop: position error -> speed target for the PI loop
+void DCMotor::positionControl() {
+
+    float error = targetDeg - positionCount * 360.0f / PULSES_PER_REV;
+
+    float rpm = 0.0f;
+    if (fabs(error) > POS_TOLERANCE_DEG) {
+        rpm = constrain(POS_KP * error, -POS_MAX_RPM, POS_MAX_RPM);
+        if (fabs(rpm) < POS_MIN_RPM) {
+            rpm = (rpm > 0.0f) ? POS_MIN_RPM : -POS_MIN_RPM;
+        }
+    }
+
+    // New speed target: reset the integrator, and clear a stall on reversal
+    if (rpm != targetRPM) {
+        integral = 0.0f;
+        if (rpm == 0.0f || (rpm > 0.0f) != (targetRPM > 0.0f)) {
+            clearStall();
+        }
+    }
+    targetRPM = rpm;
 }
 
 // ====================================

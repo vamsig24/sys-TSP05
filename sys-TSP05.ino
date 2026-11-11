@@ -523,6 +523,7 @@ void handleCommand(char* line) {
     bool isMotorCmd = strcmp(line, "SERVO") == 0 ||
                       strcmp(line, "DC") == 0 ||
                       strcmp(line, "DCPWM") == 0 ||
+                      strcmp(line, "DCDEG") == 0 ||
                       strcmp(line, "STEP") == 0;
     if (!isMotorCmd) {
         sendAck(line, false, "unknown command");
@@ -546,10 +547,16 @@ void handleCommand(char* line) {
     if (strcmp(line, "SERVO") == 0) {
         writeServo((int)(value + 0.5f));
     } else if (strcmp(line, "DC") == 0) {
+        dcMotor.cancelPosition();
         dcOpenLoop = false;
         dcTargetRPM = constrain(value, -100.0f, 100.0f);
         dcMotor.clearStall();   // explicit command = retry
+    } else if (strcmp(line, "DCDEG") == 0) {
+        dcOpenLoop = false;
+        dcTargetRPM = 0.0f;
+        dcMotor.moveDegrees(constrain(value, -3600.0f, 3600.0f));
     } else if (strcmp(line, "DCPWM") == 0) {
+        dcMotor.cancelPosition();
         dcOpenLoop = true;
         dcOpenLoopPWM = constrain((int)value, -230, 230);
         dcOpenLoopStart = millis();
@@ -634,7 +641,9 @@ bool writeStateField(int i) {
         case 27: field(F("dc_pwm")); Serial.print(DC_MOTOR_CONNECTED ? dcMotor.getPWM() : 0); break;
         case 28: field(F("dc_pol")); Serial.print((dcMotor.isMotorInverted() ? 1 : 0) + (dcMotor.isEncoderInverted() ? 2 : 0)); break;
         case 29: fieldBool(F("dc_stall"), DC_MOTOR_CONNECTED && dcMotor.isStalled()); break;
-        case 30: Serial.print("}\n"); break;
+        case 30: field(F("dc_deg")); Serial.print(dcMotor.getPositionDeg(), 1); break;
+        case 31: field(F("dc_deg_tgt")); Serial.print(dcMotor.getTargetDeg(), 1); break;
+        case 32: Serial.print("}\n"); break;
         default: return false;
     }
     return true;
@@ -740,7 +749,13 @@ void loop() {
             if (dcMotor.isOpenLoop()) {
                 dcMotor.setClosedLoop();
             }
-            dcMotor.setTargetRPM(dcTargetRPM);
+            // Sensor mode and the safety stop override a GUI position move
+            if (mode == MODE_SENSOR || safetyActive) {
+                dcMotor.cancelPosition();
+            }
+            if (!dcMotor.isPositionMode()) {
+                dcMotor.setTargetRPM(dcTargetRPM);
+            }
         }
         dcMotor.update();
         static bool wasStalled = false;

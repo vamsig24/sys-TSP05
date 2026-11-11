@@ -6,8 +6,12 @@
     tsp05 servo <deg>        (GUI mode)
     tsp05 step <delta deg>   (GUI mode)
     tsp05 dc <rpm>           (GUI mode)
+    tsp05 dcdeg <delta deg>  move the DC motor by degrees (GUI mode, PID)
     tsp05 safety <cm>        (0 disables)
     tsp05 calibrate          guided flex (force sensor) calibration
+    tsp05 characterize sharp|tof|flex|pot
+                             record converted output vs known reference values
+                             (measured error + transfer function data)
     tsp05 dctest [--forward yes|no]
                              DC motor polarity + speed-control test (motor spins!)
 
@@ -15,8 +19,10 @@ Requires tsp05_serial_node to be running (scripts/tsp05 starts it).
 """
 
 import argparse
+import csv
 import json
 import math
+import os
 import select
 import sys
 import threading
@@ -61,6 +67,8 @@ class Client(Node):
             'step': self.create_publisher(
                 Float32, f'{PREFIX}/cmd/stepper_delta', 10),
             'dc': self.create_publisher(Float32, f'{PREFIX}/cmd/dc_rpm', 10),
+            'dcdeg': self.create_publisher(
+                Float32, f'{PREFIX}/cmd/dc_deg', 10),
             'dc_pwm': self.create_publisher(
                 Float32, f'{PREFIX}/cmd/dc_pwm', 10),
             'dc_pol': self.create_publisher(
@@ -119,7 +127,7 @@ class Client(Node):
         pub.publish(msg)
 
         cmd = {'mode': 'MODE', 'servo': 'SERVO', 'step': 'STEP',
-               'dc': 'DC', 'dc_pwm': 'DCPWM', 'dc_pol': 'DCPOL',
+               'dc': 'DC', 'dcdeg': 'DCDEG', 'dc_pwm': 'DCPWM', 'dc_pol': 'DCPOL',
                'safety': 'SAFETY', 'cal': 'CAL'}[name]
         while time.monotonic() < end:
             for event in self.take_events():
@@ -159,11 +167,11 @@ def status_line(s):
     sharp = fmt(s['sharp_dist_cm'], 0) if s['sharp_valid'] else s['sharp_st']
     return (
         f"{s['mode']:<6} {'SAFETY' if s['safety'] else 'ok':<6} | "
-        f"force {s['flex_force']:5.1f}% ({s['flex_kohm']:4.1f}k) | "
-        f"pot {s['pot_pct']:3d}% | tof {tof:>5}cm | sharp {sharp:>9} | "
+        f"flex {s['flex_angle']:5.1f}° ({s['flex_kohm']:4.1f}k) | "
+        f"pot {s['pot_deg']:5.1f}° | tof {tof:>5}cm | sharp {sharp:>9} | "
         f"btn {'X' if s['btn'] else '_'}{s['btn_n']:<3} | "
         f"servo {s['servo_deg']:3d}° step {s['step_deg']:6.1f}° "
-        f"dc {s['dc_tgt']:5.1f}->{s['dc_rpm']:5.1f}rpm pwm {s['dc_pwm']:4d}"
+        f"dc {s['dc_tgt']:5.1f}->{s['dc_rpm']:5.1f}rpm {s['dc_deg']:7.1f}° pwm {s['dc_pwm']:4d}"
         f"{' STALL' if s['dc_stall'] else ''}")
 
 
@@ -641,6 +649,139 @@ def calibrate(client):
 
 
 # ----------------------------------------------------------------------
+# Characterization (measured error + transfer function data)
+# ----------------------------------------------------------------------
+
+# ref: what you measure with a ruler/protractor, meas: converted output,
+# record: electrical/raw fields saved for the transfer function plot
+SENSORS = {
+    'sharp': dict(ref='distance', unit='cm', meas='sharp_cm',
+                  record=('sharp_v',),
+                  points=(10, 15, 20, 30, 40, 50, 60, 70, 80)),
+    'tof': dict(ref='distance', unit='cm', meas='tof_cm',
+                record=('tof_mm',),
+                points=(10, 25, 50, 75, 100, 150, 200)),
+    'flex': dict(ref='bend angle', unit='deg', meas='flex_angle',
+                 record=('flex_adc', 'flex_kohm'),
+                 points=(0, 15, 30, 45, 60, 75, 90)),
+    'pot': dict(ref='shaft angle', unit='deg', meas='pot_deg',
+                record=('pot_raw', 'pot_v'),
+                points=(0, 45, 90, 135, 180, 225, 270)),
+}
+
+CHAR_DIR = os.path.join(os.environ.get('TSP05_REPO', '/tsp05'), 'characterization')
+
+
+def collect_states(client, seconds):
+    """All distinct state messages received in the next `seconds`."""
+    states, last = [], None
+    end = time.monotonic() + seconds
+    while time.monotonic() < end:
+        s = client.get()
+        if s is not last:
+            states.append(s)
+            last = s
+        time.sleep(0.02)
+    return states
+
+
+def mean_std(values):
+    values = [float(v) for v in values if not math.isnan(float(v))]
+    if not values:
+        return math.nan, math.nan
+    m = sum(values) / len(values)
+    return m, math.sqrt(sum((v - m) ** 2 for v in values) / len(values))
+
+
+def save_rows(path, columns, rows):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, 'w', newline='') as f:
+        writer = csv.DictWriter(f, fieldnames=columns)
+        writer.writeheader()
+        writer.writerows(rows)
+    # The CLI runs as root in the container: hand the files to the repo owner
+    owner = os.stat(os.path.dirname(CHAR_DIR))
+    for p in (os.path.dirname(path), path):
+        try:
+            os.chown(p, owner.st_uid, owner.st_gid)
+        except OSError:
+            pass
+
+
+def characterize(client, name, seconds=2.0):
+    """Record converted output vs a known reference at several points."""
+    cfg = SENSORS[name]
+    unit = cfg['unit']
+    path = os.path.join(CHAR_DIR, f'{name}.csv')
+    columns = (['true', 'measured', 'measured_std', 'error', 'n'] +
+               [c for k in cfg['record'] for c in (k, f'{k}_std')])
+
+    rows = []
+    if os.path.exists(path):
+        with open(path) as f:
+            rows = list(csv.DictReader(f))
+        print(f'{YELLOW}Continuing {path} ({len(rows)} points so far, '
+              f'"clear" to start over){RESET}')
+
+    print(f"{BOLD}Characterize {name}{RESET}: set a known {cfg['ref']} "
+          f'(ruler/protractor), hold still, type the true value + Enter.')
+    print(f"Suggested points ({unit}): {', '.join(map(str, cfg['points']))}")
+    print('Commands: undo, clear, Enter on empty line = finish\n')
+
+    while True:
+        s = client.get()
+        live = s.get(cfg['meas'], math.nan)
+        try:
+            text = input(f'[now {fmt(float(live))} {unit}] true {cfg["ref"]} ({unit}): ').strip()
+        except EOFError:
+            break
+        if not text:
+            break
+        if text == 'undo':
+            if rows:
+                rows.pop()
+                save_rows(path, columns, rows)
+            print(f'  removed last point ({len(rows)} left)')
+            continue
+        if text == 'clear':
+            rows = []
+            save_rows(path, columns, rows)
+            print('  cleared')
+            continue
+        try:
+            true = float(text)
+        except ValueError:
+            print(f'{RED}  not a number{RESET}')
+            continue
+
+        states = collect_states(client, seconds)
+        meas, meas_std = mean_std([st[cfg['meas']] for st in states])
+        row = {'true': true, 'measured': round(meas, 3),
+               'measured_std': round(meas_std, 3),
+               'error': round(meas - true, 3), 'n': len(states)}
+        for k in cfg['record']:
+            m, sd = mean_std([st[k] for st in states])
+            row[k], row[f'{k}_std'] = round(m, 4), round(sd, 4)
+        rows.append(row)
+        save_rows(path, columns, rows)
+
+        raw = '  '.join(f'{k} {row[k]}' for k in cfg['record'])
+        print(f"  measured {fmt(meas)} {unit} (±{fmt(meas_std)})  "
+              f"error {row['error']:+.1f} {unit}  | {raw}")
+
+    errors = [float(r['error']) for r in rows if r['error'] not in ('', 'nan')]
+    errors = [e for e in errors if not math.isnan(e)]
+    if errors:
+        mae = sum(abs(e) for e in errors) / len(errors)
+        rms = math.sqrt(sum(e * e for e in errors) / len(errors))
+        print(f'\n{BOLD}{name}: {len(errors)} points{RESET}  mean |error| '
+              f'{mae:.2f} {unit}, RMS {rms:.2f} {unit}, '
+              f'max |error| {max(abs(e) for e in errors):.2f} {unit}')
+    print(f'Saved {path}  (plots + tables: scripts/tsp05 analyze)')
+    return 0
+
+
+# ----------------------------------------------------------------------
 # Entry point
 # ----------------------------------------------------------------------
 
@@ -653,13 +794,16 @@ def main(argv=None):
                        help='only the automatic checks (no prompts)')
     sub.add_parser('watch', help='live one-line view')
     sub.add_parser('calibrate', help='guided flex (force) calibration')
+    p = sub.add_parser('characterize',
+                       help='record measured error vs known reference values')
+    p.add_argument('sensor', choices=sorted(SENSORS))
     p = sub.add_parser('dctest', help='DC motor polarity + speed test')
     p.add_argument('--forward', choices=['yes', 'no'],
                    help='answer for "did it spin forward" (else asked)')
     p = sub.add_parser('mode')
     p.add_argument('value', choices=['gui', 'sensor', 'toggle', 'GUI', 'SENSOR', 'TOGGLE'])
     for name, help_text in (('servo', 'angle deg'), ('step', 'relative deg'),
-                            ('dc', 'rpm'), ('safety', 'threshold cm, 0 = off')):
+                            ('dc', 'rpm'), ('dcdeg', 'relative deg'), ('safety', 'threshold cm, 0 = off')):
         p = sub.add_parser(name)
         p.add_argument('value', type=float, help=help_text)
     args = parser.parse_args(argv)
@@ -675,6 +819,9 @@ def main(argv=None):
 
         if args.cmd == 'calibrate':
             return calibrate(client)
+
+        if args.cmd == 'characterize':
+            return characterize(client, args.sensor)
 
         if args.cmd == 'dctest':
             forward = None if args.forward is None else args.forward == 'yes'
