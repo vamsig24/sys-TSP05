@@ -1,0 +1,509 @@
+{
+  "configById": {
+    "Indicator!mode": {
+      "path": "/tsp05/mode.data",
+      "style": "background",
+      "fontSize": 17,
+      "fallbackColor": "#757575",
+      "fallbackLabel": "Not connected",
+      "rules": [
+        {
+          "operator": "=",
+          "rawValue": "GUI",
+          "color": "#1e88e5",
+          "label": "GUI"
+        },
+        {
+          "operator": "=",
+          "rawValue": "SENSOR",
+          "color": "#43a047",
+          "label": "SENSOR"
+        }
+      ],
+      "foxglovePanelTitle": "Control mode"
+    },
+    "Indicator!safety": {
+      "path": "/tsp05/safety/active.data",
+      "style": "bulb",
+      "fallbackColor": "#43a047",
+      "fallbackLabel": "Clear",
+      "rules": [
+        {
+          "operator": "=",
+          "rawValue": "true",
+          "color": "#e53935",
+          "label": "SAFETY STOP"
+        }
+      ],
+      "foxglovePanelTitle": "Sharp safety"
+    },
+    "Indicator!connected": {
+      "path": "/tsp05/connected.data",
+      "style": "bulb",
+      "fallbackColor": "#e53935",
+      "fallbackLabel": "Disconnected",
+      "rules": [
+        {
+          "operator": "=",
+          "rawValue": "true",
+          "color": "#43a047",
+          "label": "Connected"
+        }
+      ],
+      "foxglovePanelTitle": "Arduino connected"
+    },
+    "Publish!mode_gui": {
+      "topicName": "/tsp05/cmd/mode",
+      "datatype": "std_msgs/msg/String",
+      "buttonText": "GUI mode",
+      "advancedView": false,
+      "value": "{\n  \"data\": \"GUI\"\n}",
+      "buttonColor": "#1e88e5",
+      "foxglovePanelTitle": "Mode"
+    },
+    "Publish!mode_sensor": {
+      "topicName": "/tsp05/cmd/mode",
+      "datatype": "std_msgs/msg/String",
+      "buttonText": "SENSOR mode",
+      "advancedView": false,
+      "value": "{\n  \"data\": \"SENSOR\"\n}",
+      "buttonColor": "#43a047",
+      "foxglovePanelTitle": "Mode"
+    },
+    "Publish!servo": {
+      "topicName": "/tsp05/cmd/servo_angle",
+      "datatype": "std_msgs/msg/Float32",
+      "buttonText": "Publish servo angle",
+      "advancedView": true,
+      "value": "{\n  \"data\": 90.0\n}",
+      "foxglovePanelTitle": "Servo angle: enter 0..180 deg"
+    },
+    "Publish!step": {
+      "topicName": "/tsp05/cmd/stepper_delta",
+      "datatype": "std_msgs/msg/Float32",
+      "buttonText": "Publish stepper delta",
+      "advancedView": true,
+      "value": "{\n  \"data\": 45.0\n}",
+      "foxglovePanelTitle": "Stepper: enter relative degrees (+/-)"
+    },
+    "Publish!dc": {
+      "topicName": "/tsp05/cmd/dc_rpm",
+      "datatype": "std_msgs/msg/Float32",
+      "buttonText": "Publish DC RPM",
+      "advancedView": true,
+      "value": "{\n  \"data\": 20.0\n}",
+      "foxglovePanelTitle": "DC velocity: enter signed RPM"
+    },
+    "Publish!dc_pos": {
+      "topicName": "/tsp05/cmd/dc_position_delta",
+      "datatype": "std_msgs/msg/Float32",
+      "buttonText": "Publish relative angle",
+      "advancedView": true,
+      "value": "{\n  \"data\": 90.0\n}",
+      "foxglovePanelTitle": "DC position: enter relative degrees (+/-)"
+    },
+    "Publish!dc_stop": {
+      "topicName": "/tsp05/cmd/dc_rpm",
+      "datatype": "std_msgs/msg/Float32",
+      "buttonText": "STOP DC",
+      "advancedView": false,
+      "value": "{\n  \"data\": 0.0\n}",
+      "buttonColor": "#e53935",
+      "foxglovePanelTitle": "DC stop"
+    },
+    "RawMessages!events": {
+      "topicPath": "/tsp05/events",
+      "fontSize": 12,
+      "expansion": "all",
+      "foxglovePanelTitle": "Arduino acknowledgments / button / safety"
+    },
+    "Gauge!flex_angle": {
+      "path": "/tsp05/sensors/flex/force_pct.data",
+      "style": "dial",
+      "minValue": 0,
+      "maxValue": 100,
+      "tickInterval": 20,
+      "showTicks": true,
+      "colorMode": "colormap",
+      "colorMap": "turbo",
+      "reverse": false,
+      "reverseDirection": false,
+      "foxglovePanelTitle": "Calibrated flex bend (0-100%)"
+    },
+    "Gauge!pot_angle": {
+      "path": "/tsp05/sensors/pot/mapped_pct.data",
+      "style": "dial",
+      "minValue": 0,
+      "maxValue": 100,
+      "tickInterval": 20,
+      "showTicks": true,
+      "colorMode": "colormap",
+      "colorMap": "turbo",
+      "reverse": false,
+      "reverseDirection": false,
+      "foxglovePanelTitle": "Pot in calibrated endstops (0-100%)"
+    },
+    "Gauge!tof": {
+      "path": "/tsp05/sensors/tof/distance_cm.data",
+      "style": "dial",
+      "minValue": 0,
+      "maxValue": 200,
+      "tickInterval": 20,
+      "showTicks": true,
+      "colorMode": "colormap",
+      "colorMap": "turbo",
+      "reverse": false,
+      "reverseDirection": false,
+      "foxglovePanelTitle": "ToF distance (cm)"
+    },
+    "Gauge!sharp": {
+      "path": "/tsp05/sensors/sharp/distance_cm.data",
+      "style": "dial",
+      "minValue": 10,
+      "maxValue": 80,
+      "tickInterval": 10,
+      "showTicks": true,
+      "colorMode": "colormap",
+      "colorMap": "turbo",
+      "reverse": false,
+      "reverseDirection": false,
+      "foxglovePanelTitle": "Sharp filtered distance (cm)"
+    },
+    "Gauge!servo": {
+      "path": "/tsp05/motors/servo/angle_deg.data",
+      "style": "dial",
+      "minValue": 0,
+      "maxValue": 180,
+      "tickInterval": 30,
+      "showTicks": true,
+      "colorMode": "colormap",
+      "colorMap": "turbo",
+      "reverse": false,
+      "reverseDirection": false,
+      "foxglovePanelTitle": "Servo commanded angle [0-180 deg]"
+    },
+    "Gauge!step_target": {
+      "path": "/tsp05/mapping/pot_stepper_ideal_deg.data",
+      "style": "dial",
+      "minValue": 0,
+      "maxValue": 360,
+      "tickInterval": 60,
+      "showTicks": true,
+      "colorMode": "colormap",
+      "colorMap": "turbo",
+      "reverse": false,
+      "reverseDirection": false,
+      "foxglovePanelTitle": "Stepper mapped target [0-360 deg]"
+    },
+    "Gauge!stepper": {
+      "path": "/tsp05/motors/stepper/angle_deg.data",
+      "style": "dial",
+      "minValue": -360,
+      "maxValue": 360,
+      "tickInterval": 90,
+      "showTicks": true,
+      "colorMode": "colormap",
+      "colorMap": "turbo",
+      "reverse": false,
+      "reverseDirection": false,
+      "foxglovePanelTitle": "Stepper reported angle (deg)"
+    },
+    "Gauge!dc_rpm": {
+      "path": "/tsp05/motors/dc/rpm.data",
+      "style": "dial",
+      "minValue": -60,
+      "maxValue": 60,
+      "tickInterval": 10,
+      "showTicks": true,
+      "colorMode": "colormap",
+      "colorMap": "turbo",
+      "reverse": false,
+      "reverseDirection": false,
+      "foxglovePanelTitle": "DC encoder RPM"
+    },
+    "Gauge!dc_position": {
+      "path": "/tsp05/motors/dc/position_deg.data",
+      "style": "dial",
+      "minValue": -360,
+      "maxValue": 360,
+      "tickInterval": 90,
+      "showTicks": true,
+      "colorMode": "colormap",
+      "colorMap": "turbo",
+      "reverse": false,
+      "reverseDirection": false,
+      "foxglovePanelTitle": "DC encoder position (deg)"
+    },
+    "Indicator!button": {
+      "path": "/tsp05/button/pressed.data",
+      "style": "bulb",
+      "fallbackColor": "#757575",
+      "fallbackLabel": "Released",
+      "rules": [
+        {
+          "operator": "=",
+          "rawValue": "true",
+          "color": "#fb8c00",
+          "label": "Pressed"
+        }
+      ],
+      "foxglovePanelTitle": "Debounced hardware switch"
+    },
+    "Plot!flex_raw": {
+      "paths": [
+        {
+          "value": "/tsp05/sensors/flex/adc_raw.data",
+          "label": "Raw",
+          "color": "#757575",
+          "enabled": true,
+          "timestampMethod": "receiveTime"
+        },
+        {
+          "value": "/tsp05/sensors/flex/adc_filtered.data",
+          "label": "Filtered",
+          "color": "#1e88e5",
+          "enabled": true,
+          "timestampMethod": "receiveTime",
+          "lineSize": 2
+        }
+      ],
+      "xAxisVal": "timestamp",
+      "timeWindowMode": "sliding",
+      "followingViewWidth": 30,
+      "showLegend": true,
+      "legendDisplay": "floating",
+      "floatingLegendPosition": "top-left",
+      "showPlotValuesInLegend": true,
+      "isSynced": true,
+      "yAxisLabel": "ADC counts",
+      "showYAxisGridLines": true,
+      "foxglovePanelTitle": "Flex: raw vs filtered ADC"
+    },
+    "Plot!transfer": {
+      "paths": [
+        {
+          "value": "/tsp05/sensors/sharp/adc_vs_reported_cm.points[:].y",
+          "xValuePath": "/tsp05/sensors/sharp/adc_vs_reported_cm.points[:].x",
+          "label": "11 supplied calculated-distance/ADC pairs",
+          "color": "#fb8c00",
+          "enabled": true,
+          "showLine": true,
+          "timestampMethod": "receiveTime"
+        }
+      ],
+      "xAxisVal": "custom",
+      "timeRange": "latest",
+      "xAxisLabel": "ROS-calculated distance (cm) \u2013 NOT independent measurement",
+      "yAxisLabel": "Raw Sharp ADC counts (0..1023)",
+      "minXValue": 10,
+      "maxXValue": 70,
+      "minYValue": 0,
+      "maxYValue": 400,
+      "showLegend": true,
+      "legendDisplay": "floating",
+      "floatingLegendPosition": "top-left",
+      "showYAxisGridLines": true,
+      "foxglovePanelTitle": "Sharp: ROS-calculated distance vs ADC (NOT ruler data)"
+    },
+    "Plot!dc_speed": {
+      "paths": [
+        {
+          "value": "/tsp05/motors/dc/target_rpm.data",
+          "label": "Target RPM",
+          "color": "#fb8c00",
+          "enabled": true,
+          "timestampMethod": "receiveTime",
+          "lineStyle": "dashed"
+        },
+        {
+          "value": "/tsp05/motors/dc/rpm.data",
+          "label": "Encoder RPM",
+          "color": "#e53935",
+          "enabled": true,
+          "timestampMethod": "receiveTime",
+          "lineSize": 2
+        }
+      ],
+      "xAxisVal": "timestamp",
+      "timeWindowMode": "sliding",
+      "followingViewWidth": 30,
+      "showLegend": true,
+      "legendDisplay": "floating",
+      "floatingLegendPosition": "top-left",
+      "showPlotValuesInLegend": true,
+      "isSynced": true,
+      "yAxisLabel": "RPM",
+      "showYAxisGridLines": true,
+      "minYValue": -60,
+      "maxYValue": 60,
+      "foxglovePanelTitle": "DC PID velocity: target vs measured"
+    },
+    "Plot!dc_position": {
+      "paths": [
+        {
+          "value": "/tsp05/motors/dc/position_deg.data",
+          "label": "Encoder (deg)",
+          "color": "#1e88e5",
+          "enabled": true,
+          "timestampMethod": "receiveTime"
+        },
+        {
+          "value": "/tsp05/motors/dc/position_target_deg.data",
+          "label": "Target (deg)",
+          "color": "#fb8c00",
+          "enabled": true,
+          "timestampMethod": "receiveTime",
+          "lineStyle": "dashed"
+        }
+      ],
+      "xAxisVal": "timestamp",
+      "timeWindowMode": "sliding",
+      "followingViewWidth": 30,
+      "showLegend": true,
+      "legendDisplay": "floating",
+      "floatingLegendPosition": "top-left",
+      "showPlotValuesInLegend": true,
+      "isSynced": true,
+      "yAxisLabel": "degrees",
+      "showYAxisGridLines": true,
+      "foxglovePanelTitle": "DC PID position: encoder vs target"
+    },
+    "RawMessages!mapping": {
+      "topicPath": "/tsp05/mapping/status",
+      "fontSize": 12,
+      "expansion": "all",
+      "foxglovePanelTitle": "Sensor ranges and mappings (LIVE)"
+    }
+  },
+  "globalVariables": {},
+  "userNodes": {},
+  "playbackConfig": {
+    "speed": 1.0
+  },
+  "layout": {
+    "direction": "row",
+    "first": {
+      "direction": "column",
+      "first": {
+        "direction": "row",
+        "first": "Indicator!mode",
+        "second": {
+          "direction": "row",
+          "first": "Indicator!safety",
+          "second": "Indicator!connected",
+          "splitPercentage": 50.0
+        },
+        "splitPercentage": 33.333333333333336
+      },
+      "second": {
+        "direction": "column",
+        "first": {
+          "direction": "row",
+          "first": "Publish!mode_gui",
+          "second": "Publish!mode_sensor",
+          "splitPercentage": 50.0
+        },
+        "second": {
+          "direction": "column",
+          "first": "Publish!servo",
+          "second": {
+            "direction": "column",
+            "first": "Publish!step",
+            "second": {
+              "direction": "column",
+              "first": "Publish!dc",
+              "second": {
+                "direction": "column",
+                "first": "Publish!dc_pos",
+                "second": {
+                  "direction": "column",
+                  "first": "Publish!dc_stop",
+                  "second": "RawMessages!events",
+                  "splitPercentage": 50.0
+                },
+                "splitPercentage": 33.333333333333336
+              },
+              "splitPercentage": 25.0
+            },
+            "splitPercentage": 20.0
+          },
+          "splitPercentage": 16.666666666666668
+        },
+        "splitPercentage": 14.285714285714286
+      },
+      "splitPercentage": 12.5
+    },
+    "second": {
+      "direction": "row",
+      "first": {
+        "direction": "column",
+        "first": {
+          "direction": "row",
+          "first": "Gauge!flex_angle",
+          "second": "Gauge!pot_angle",
+          "splitPercentage": 50.0
+        },
+        "second": {
+          "direction": "column",
+          "first": {
+            "direction": "row",
+            "first": "Gauge!servo",
+            "second": "Gauge!step_target",
+            "splitPercentage": 50.0
+          },
+          "second": {
+            "direction": "column",
+            "first": {
+              "direction": "row",
+              "first": "Gauge!tof",
+              "second": "Gauge!sharp",
+              "splitPercentage": 50.0
+            },
+            "second": {
+              "direction": "column",
+              "first": {
+                "direction": "row",
+                "first": "Gauge!stepper",
+                "second": "Gauge!dc_rpm",
+                "splitPercentage": 50.0
+              },
+              "second": {
+                "direction": "row",
+                "first": "Gauge!dc_position",
+                "second": "Indicator!button",
+                "splitPercentage": 50.0
+              },
+              "splitPercentage": 50.0
+            },
+            "splitPercentage": 33.333333333333336
+          },
+          "splitPercentage": 25.0
+        },
+        "splitPercentage": 20.0
+      },
+      "second": {
+        "direction": "column",
+        "first": "RawMessages!mapping",
+        "second": {
+          "direction": "column",
+          "first": "Plot!flex_raw",
+          "second": {
+            "direction": "column",
+            "first": "Plot!transfer",
+            "second": {
+              "direction": "column",
+              "first": "Plot!dc_speed",
+              "second": "Plot!dc_position",
+              "splitPercentage": 50.0
+            },
+            "splitPercentage": 33.333333333333336
+          },
+          "splitPercentage": 25.0
+        },
+        "splitPercentage": 32
+      },
+      "splitPercentage": 42
+    },
+    "splitPercentage": 29
+  }
+}
