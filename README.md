@@ -96,7 +96,7 @@ This starts everything and opens Foxglove. In Foxglove:
 The layout follows the design image:
 - **Left:** mode and safety indicators, *GUI mode* / *SENSOR mode* buttons. Tabs hold the motor controls (servo angle, stepper ±15° or any angle, DC speed) and force-sensor calibration buttons. The Arduino's replies are shown below, so you can see when a command was rejected.
 - **Middle:** live gauges for force, potentiometer, both distance sensors, servo, stepper, DC target and measured speed, a DC stall light and the button.
-- **Right:** force sensor raw vs filtered, force transfer function (force % vs ADC), distances with the safety threshold, motor positions, DC target vs measured speed, and VL53L1X distance → DC speed (XY).
+- **Right:** force sensor raw vs filtered, flex transfer function (bend angle vs ADC), distances with the safety threshold, motor positions, DC target vs measured speed, and VL53L1X distance → DC speed (XY).
 
 To edit the layout, change `foxglove/make_layout.py` and run it again.
 
@@ -175,7 +175,7 @@ Suggested panels (as in section 6 of the diagram):
 | Indicator | `/tsp05/mode`, `/tsp05/safety/active`, `/tsp05/connected` |
 | Plot: flex raw vs filtered | `/tsp05/sensors/flex/adc_raw.data`, `/tsp05/sensors/flex/adc_filtered.data` |
 | Plot: distances | `/tsp05/sensors/tof/distance_cm.data`, `/tsp05/sensors/sharp/distance_cm.data` |
-| Gauge | `/tsp05/sensors/pot/position_pct`, `/tsp05/motors/servo/angle_deg`, `/tsp05/motors/stepper/angle_deg` |
+| Gauge | `/tsp05/sensors/flex/angle_deg`, `/tsp05/sensors/pot/angle_deg`, `/tsp05/motors/servo/angle_deg`, `/tsp05/motors/stepper/angle_deg` |
 | Raw Messages | `/tsp05/events` (acks, mode changes, safety stops), `/tsp05/state_json` |
 
 ## ROS 2 interface (`tsp05_bridge`)
@@ -190,8 +190,9 @@ All topics are under `/tsp05` and use `std_msgs`. Invalid distances are publishe
 | `connected` | Bool | receiving data from the Arduino |
 | `safety/active`, `safety/threshold_cm` | Bool, Float32 | |
 | `sensors/flex/{adc_raw, adc_filtered, resistance_kohm, force_pct, bend_deg, cal_flat_kohm, cal_bent_kohm}` | Float32 | |
-| `sensors/flex/transfer` | geometry_msgs/Point | x = filtered ADC, y = force %, z = servo target deg (for the XY plot) |
-| `sensors/pot/{adc_raw, voltage, position_pct}` | Float32 | |
+| `sensors/flex/transfer` | geometry_msgs/Point | x = bend angle deg, y = filtered ADC, z = resistance kOhm (for the transfer function XY plot) |
+| `sensors/pot/{adc_raw, voltage, position_pct, angle_deg}` | Float32 | |
+| `sensors/flex/angle_deg` | Float32 | bend angle from resistance (protocol.py model) |
 | `sensors/tof/ok`, `sensors/tof/distance_cm` | Bool, Float32 | VL53L1X |
 | `sensors/sharp/{voltage, distance_cm}`, `valid`, `status` | Float32, Bool, String | |
 | `button/pressed`, `button/count` | Bool, Int32 | |

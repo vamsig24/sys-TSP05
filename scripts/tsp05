@@ -5,8 +5,10 @@
 #   scripts/tsp05 check --auto   automatic checks only, no prompts
 #   scripts/tsp05 watch          live one-line view of sensors and motors
 #   scripts/tsp05 mode gui|sensor|toggle
-#   scripts/tsp05 servo 90 | step 15 | dc 40 | safety 20
+#   scripts/tsp05 servo 90 | step 15 | dc 40 | dcdeg 90 | safety 20
 #   scripts/tsp05 calibrate      guided flex (force sensor) calibration
+#   scripts/tsp05 characterize sharp|tof|flex|pot   measure error vs known values
+#   scripts/tsp05 analyze        transfer function plots + error table
 #   scripts/tsp05 dctest         DC motor polarity + speed test (motor spins!)
 #   scripts/tsp05 foxglove       start bridge + open Foxglove (then import the layout)
 #
@@ -204,13 +206,15 @@ In Foxglove:
      $REPO/foxglove/tsp05_layout.json
 EOF2
         ;;
-    check|watch|mode|servo|step|dc|dctest|safety|calibrate)
+    analyze)
+        python3 "$REPO/scripts/analyze_characterization.py" ;;
+    check|watch|mode|servo|step|dc|dcdeg|dctest|safety|calibrate|characterize)
         ensure_container; ensure_built; start_bridge
         tty_flag=-i
         [ -t 0 ] && tty_flag=-it
         exec docker exec $tty_flag "$CONTAINER" bash -c "$ROS_ENV; ros2 run tsp05_bridge tsp05 $cmd $*" ;;
     help|-h|--help)
-        sed -n '2,23p' "$0" | sed 's/^# \{0,1\}//' ;;
+        sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//' ;;
     *)
         die "unknown command '$cmd' (scripts/tsp05 help)" ;;
 esac

@@ -136,6 +136,14 @@
       "value": "{\n  \"data\": 30.0\n}",
       "foxglovePanelTitle": "DC speed (RPM, about 20..50 either way)"
     },
+    "Publish!dc_deg": {
+      "topicName": "/tsp05/cmd/dc_deg",
+      "datatype": "std_msgs/msg/Float32",
+      "buttonText": "Move DC motor",
+      "advancedView": true,
+      "value": "{\n  \"data\": 90.0\n}",
+      "foxglovePanelTitle": "DC relative move (deg, PID on encoder)"
+    },
     "Publish!dc_stop": {
       "topicName": "/tsp05/cmd/dc_rpm",
       "datatype": "std_msgs/msg/Float32",
@@ -252,18 +260,23 @@
                     "second": {
                       "direction": "column",
                       "first": "Publish!dc",
-                      "second": "Publish!dc_stop",
-                      "splitPercentage": 50.0
+                      "second": {
+                        "direction": "column",
+                        "first": "Publish!dc_deg",
+                        "second": "Publish!dc_stop",
+                        "splitPercentage": 50.0
+                      },
+                      "splitPercentage": 33.333333333333336
                     },
-                    "splitPercentage": 33.333333333333336
+                    "splitPercentage": 25.0
                   },
-                  "splitPercentage": 25.0
+                  "splitPercentage": 20.0
                 },
-                "splitPercentage": 20.0
+                "splitPercentage": 16.666666666666668
               },
-              "splitPercentage": 16.666666666666668
+              "splitPercentage": 14.285714285714286
             },
-            "splitPercentage": 14.285714285714286
+            "splitPercentage": 12.5
           }
         },
         {
@@ -298,30 +311,30 @@
       ]
     },
     "Gauge!force": {
-      "path": "/tsp05/sensors/flex/force_pct.data",
+      "path": "/tsp05/sensors/flex/angle_deg.data",
       "style": "dial",
       "minValue": 0,
-      "maxValue": 100,
-      "tickInterval": 10,
+      "maxValue": 120,
+      "tickInterval": 15,
       "showTicks": true,
       "colorMode": "colormap",
       "colorMap": "red-yellow-green",
       "reverse": false,
       "reverseDirection": false,
-      "foxglovePanelTitle": "Force (flex) %"
+      "foxglovePanelTitle": "Flex bend angle (deg)"
     },
     "Gauge!pot": {
-      "path": "/tsp05/sensors/pot/position_pct.data",
+      "path": "/tsp05/sensors/pot/angle_deg.data",
       "style": "dial",
       "minValue": 0,
-      "maxValue": 100,
-      "tickInterval": 10,
+      "maxValue": 270,
+      "tickInterval": 45,
       "showTicks": true,
       "colorMode": "colormap",
       "colorMap": "turbo",
       "reverse": false,
       "reverseDirection": false,
-      "foxglovePanelTitle": "Potentiometer %"
+      "foxglovePanelTitle": "Potentiometer angle (deg)"
     },
     "Gauge!tof": {
       "path": "/tsp05/sensors/tof/distance_cm.data",
@@ -468,7 +481,7 @@
         {
           "value": "/tsp05/sensors/flex/transfer.y",
           "xValuePath": "/tsp05/sensors/flex/transfer.x",
-          "label": "force % vs ADC",
+          "label": "ADC vs bend angle",
           "color": "#fb8c00",
           "enabled": true,
           "showLine": false,
@@ -476,15 +489,17 @@
         }
       ],
       "xAxisVal": "custom",
-      "xAxisLabel": "Filtered ADC",
-      "yAxisLabel": "Force %",
+      "xAxisLabel": "Bend angle (deg)",
+      "yAxisLabel": "Filtered ADC",
+      "minXValue": 0,
+      "maxXValue": 120,
       "minYValue": 0,
-      "maxYValue": 100,
+      "maxYValue": 1023,
       "showLegend": true,
       "legendDisplay": "floating",
       "floatingLegendPosition": "top-left",
       "showYAxisGridLines": true,
-      "foxglovePanelTitle": "Force transfer function (ADC -> force %)"
+      "foxglovePanelTitle": "Flex transfer function (bend angle -> ADC)"
     },
     "Plot!distances": {
       "paths": [
@@ -545,6 +560,21 @@
           "value": "/tsp05/motors/stepper/target_deg.data",
           "label": "Stepper target deg",
           "color": "#43a047",
+          "enabled": true,
+          "timestampMethod": "receiveTime",
+          "lineStyle": "dashed"
+        },
+        {
+          "value": "/tsp05/motors/dc/angle_deg.data",
+          "label": "DC deg",
+          "color": "#e53935",
+          "enabled": true,
+          "timestampMethod": "receiveTime"
+        },
+        {
+          "value": "/tsp05/motors/dc/target_deg.data",
+          "label": "DC target deg",
+          "color": "#e53935",
           "enabled": true,
           "timestampMethod": "receiveTime",
           "lineStyle": "dashed"

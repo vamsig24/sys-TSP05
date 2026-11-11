@@ -34,10 +34,12 @@ STATE_TOPICS = (
     ('flex_force', 'sensors/flex/force_pct', Float32),
     ('flex_flat_k', 'sensors/flex/cal_flat_kohm', Float32),
     ('flex_bent_k', 'sensors/flex/cal_bent_kohm', Float32),
+    ('flex_angle', 'sensors/flex/angle_deg', Float32),
 
     ('pot_raw', 'sensors/pot/adc_raw', Float32),
     ('pot_v', 'sensors/pot/voltage', Float32),
     ('pot_pct', 'sensors/pot/position_pct', Float32),
+    ('pot_deg', 'sensors/pot/angle_deg', Float32),
 
     ('tof_ok', 'sensors/tof/ok', Bool),
     ('tof_cm', 'sensors/tof/distance_cm', Float32),
@@ -59,6 +61,8 @@ STATE_TOPICS = (
     ('dc_pwm', 'motors/dc/pwm', Float32),
     ('dc_pol', 'motors/dc/polarity', Int32),
     ('dc_stall', 'motors/dc/stalled', Bool),
+    ('dc_deg', 'motors/dc/angle_deg', Float32),
+    ('dc_deg_tgt', 'motors/dc/target_deg', Float32),
 )
 
 
@@ -135,6 +139,9 @@ class TSP05SerialNode(Node):
         self.create_subscription(
             Float32, f'{prefix}/cmd/dc_rpm',
             lambda m: self.send(protocol.format_dc, m.data), 10)
+        self.create_subscription(
+            Float32, f'{prefix}/cmd/dc_deg',
+            lambda m: self.send(protocol.format_dc_deg, m.data), 10)
         self.create_subscription(
             Float32, f'{prefix}/cmd/dc_pwm',
             lambda m: self.send(protocol.format_dc_pwm, m.data), 10)
@@ -310,8 +317,8 @@ class TSP05SerialNode(Node):
         for key, (pub, msg_type) in self.state_pubs.items():
             pub.publish(to_msg(msg_type, msg.get(key)))
         self.transfer_pub.publish(Point(
-            x=float(msg['flex_adc']), y=float(msg['flex_force']),
-            z=float(msg['flex_deg'])))
+            x=float(msg['flex_angle']), y=float(msg['flex_adc']),
+            z=float(msg['flex_kohm'])))
         self.dc_transfer_pub.publish(Point(
             x=float(msg['tof_cm']), y=float(msg['dc_tgt']),
             z=float(msg['dc_rpm'])))

@@ -19,6 +19,14 @@ MODES = ('GUI', 'SENSOR')
 SHARP_MIN_CM = 10.0
 SHARP_MAX_CM = 80.0
 
+# Flex bend angle model: R = FLEX_R0_KOHM + FLEX_KOHM_PER_DEG * angle.
+# Measured (held 15 s each): straight 12.9 kOhm, 90 deg bend 33.8 kOhm.
+FLEX_R0_KOHM = 12.9
+FLEX_KOHM_PER_DEG = 0.232
+
+# Potentiometer mechanical rotation from end stop to end stop
+POT_RANGE_DEG = 270.0
+
 # Fields every state message must have
 STATE_FIELDS = (
     'ms', 'mode', 'safety', 'safety_cm',
@@ -30,6 +38,7 @@ STATE_FIELDS = (
     'btn', 'btn_n',
     'servo_deg', 'step_deg', 'step_tgt',
     'dc_on', 'dc_tgt', 'dc_rpm', 'dc_pwm', 'dc_pol', 'dc_stall',
+    'dc_deg', 'dc_deg_tgt',
 )
 
 
@@ -71,10 +80,15 @@ def derive_state(msg):
                    SHARP_MIN_CM <= float(msg['sharp_cm']) <= SHARP_MAX_CM)
     sharp_cm = float(msg['sharp_cm']) if sharp_valid else math.nan
 
+    flex_angle = (float(msg['flex_kohm']) - FLEX_R0_KOHM) / FLEX_KOHM_PER_DEG
+    pot_deg = float(msg['pot_v']) / 5.0 * POT_RANGE_DEG
+
     return {
         'tof_cm': tof_cm,
         'sharp_valid': sharp_valid,
         'sharp_dist_cm': sharp_cm,
+        'flex_angle': max(0.0, flex_angle),
+        'pot_deg': pot_deg,
     }
 
 
@@ -106,6 +120,13 @@ def format_dc(rpm):
     rpm = _finite(rpm, 'DC rpm')
     rpm = min(max(rpm, -100.0), 100.0)
     return f'DC {rpm:.1f}\n'
+
+
+def format_dc_deg(delta_deg):
+    """Move the DC motor this many degrees from its current position."""
+    delta = _finite(delta_deg, 'DC degrees')
+    delta = min(max(delta, -3600.0), 3600.0)
+    return f'DCDEG {delta:.1f}\n'
 
 
 def format_dc_pwm(pwm):
