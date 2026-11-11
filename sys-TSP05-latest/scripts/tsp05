@@ -1,0 +1,151 @@
+#!/usr/bin/env bash
+# Native ROS 2 Humble launcher for the TSP05 Arduino Uno. No Docker needed.
+set -euo pipefail
+REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+WS="$REPO/ros2_ws"
+PIDFILE="$REPO/.tsp05_native.pid"
+LOGFILE="$REPO/.tsp05_native.log"
+PORT="${TSP05_PORT:-/dev/ttyACM0}"
+FQBN='arduino:avr:uno'
+info() { printf '[tsp05] %s\n' "$*"; }
+die() { printf '[tsp05] ERROR: %s\n' "$*" >&2; exit 1; }
+
+source_ros() {
+    [[ -r /opt/ros/humble/setup.bash ]] || die 'ROS 2 Humble not installed: install Ubuntu 22.04 ROS Humble first.'
+    # setup scripts can refer to unset variables; suspend strict unbound handling.
+    set +u
+    source /opt/ros/humble/setup.bash
+    [[ ! -r "$WS/install/setup.bash" ]] || source "$WS/install/setup.bash"
+    set -u
+}
+build() {
+    source_ros
+    command -v colcon >/dev/null || die 'colcon missing: sudo apt install python3-colcon-common-extensions'
+    (cd "$WS" && colcon build --symlink-install --packages-select tsp05_bridge)
+}
+unit() {
+    PYTHONPATH="$WS/src/tsp05_bridge${PYTHONPATH:+:$PYTHONPATH}" \
+       python3 -m unittest discover -s "$WS/src/tsp05_bridge/test" -v
+    python3 -m unittest discover -s "$REPO/tools/tests" -v
+}
+check_port() {
+    [[ -e "$PORT" ]] || die "Arduino serial port $PORT not found. Run: arduino-cli board list"
+    if command -v fuser >/dev/null && fuser -s "$PORT"; then
+        die "Serial port $PORT already in use. Close Serial Monitor / another bridge."
+    fi
+    [[ -r "$PORT" && -w "$PORT" ]] || die "No permission for $PORT: sudo usermod -aG dialout \"\$USER\"; log out/in."
+}
+running() {
+    [[ -r "$PIDFILE" ]] || return 1
+    local pid
+    pid="$(cat "$PIDFILE")"
+    [[ "$pid" =~ ^[0-9]+$ ]] && kill -0 "$pid" 2>/dev/null &&
+        ps -p "$pid" -o args= | grep -q 'ros2 launch tsp05_bridge tsp05.launch.py'
+}
+start() {
+    source_ros
+    command -v ros2 >/dev/null || die 'ros2 command missing'
+    ros2 pkg prefix tsp05_bridge >/dev/null 2>&1 || die 'Build first: scripts/tsp05 build'
+    if running; then info "Already started (PID $(cat "$PIDFILE"))"; return; fi
+    check_port
+    rm -f "$PIDFILE"
+    local csv="$REPO/calibration/measurements.csv"
+    # Passing path when absent is OK: bridge emits a reminder and waits for samples.
+    info "Starting native ros2 launch on $PORT (log: $LOGFILE)"
+    # New session puts launch and its children in their own process group.
+    setsid ros2 launch tsp05_bridge tsp05.launch.py \
+        "port:=$PORT" "calibration_csv:=$csv" > "$LOGFILE" 2>&1 < /dev/null &
+    local pid=$!
+    echo "$pid" > "$PIDFILE"
+    for _ in $(seq 1 30); do
+        if grep -q 'Receiving data from Arduino' "$LOGFILE" 2>/dev/null; then
+            info 'Arduino connected; Foxglove websocket ws://localhost:8765'
+            return
+        fi
+        kill -0 "$pid" 2>/dev/null || break
+        sleep 0.2
+    done
+    tail -n 20 "$LOGFILE" || true
+    die 'Bridge not confirmed connected. Check serial port, firmware upload, and log above.'
+}
+stop() {
+    if ! running; then rm -f "$PIDFILE"; info 'No native bridge to stop'; return; fi
+    local pid
+    pid="$(cat "$PIDFILE")"
+    info "Stopping native ROS launch (PID $pid)"
+    kill -INT -- "-$pid" 2>/dev/null || kill -INT "$pid" 2>/dev/null || true
+    for _ in $(seq 1 30); do
+        kill -0 "$pid" 2>/dev/null || break
+        sleep 0.1
+    done
+    if kill -0 "$pid" 2>/dev/null; then
+        kill -TERM -- "-$pid" 2>/dev/null || true
+    fi
+    rm -f "$PIDFILE"
+}
+flash() {
+    command -v arduino-cli >/dev/null || die 'arduino-cli missing; see NATIVE_HUMBLE.md'
+    if running; then stop; fi
+    check_port
+    arduino-cli core list | grep -q 'arduino:avr' || die 'First run: arduino-cli core install arduino:avr'
+    arduino-cli lib list | grep -q 'SparkFun VL53L1X' || \
+        die 'First run: arduino-cli lib install "SparkFun VL53L1X 4m Laser Distance Sensor"'
+    arduino-cli compile --fqbn "$FQBN" "$REPO"
+    arduino-cli upload -p "$PORT" --fqbn "$FQBN" "$REPO"
+    info 'Flashed. Run scripts/tsp05 start after Arduino resets.'
+}
+usage() {
+    cat <<'EOF'
+Native Ubuntu 22.04 / ROS 2 Humble (no Docker):
+  scripts/tsp05 build                     build ROS package
+  scripts/tsp05 flash                     compile/upload Arduino Uno via arduino-cli
+  scripts/tsp05 start|stop|restart        start/stop native ROS2+Foxglove bridge
+  scripts/tsp05 foxglove                  start bridge; show Foxglove URL & layout
+  scripts/tsp05 logs                      show native ROS logs
+  scripts/tsp05 unit                      pure-Python tests (no hardware)
+  scripts/tsp05 check [--auto]            guided hardware checks
+  scripts/tsp05 watch                     live sensor and motor states
+  scripts/tsp05 mode gui|sensor           change mode
+  scripts/tsp05 servo 90                  absolute servo angle
+  scripts/tsp05 step -15                  relative stepper angle
+  scripts/tsp05 dc -30                    desired signed DC velocity (RPM)
+  scripts/tsp05 dcpos 90                  DC encoder/PID relative angle (degrees)
+  scripts/tsp05 dctest                    DC polarity + signed speed validation
+  scripts/tsp05 calibrate                 flex endpoints
+  scripts/tsp05 potcal min|max|reset      measure potentiometer endstops (GUI mode)
+  scripts/tsp05 measure <sensor> <truth>  collect true physical sensor samples
+  scripts/tsp05 plot                      save measured transfer + error report
+
+Override Arduino serial port: export TSP05_PORT=/dev/ttyACM0
+EOF
+}
+cmd="${1:-help}"
+if [[ $# -gt 0 ]]; then shift; fi
+case "$cmd" in
+    build) build ;;
+    unit) unit ;;
+    flash) flash ;;
+    start) start ;;
+    stop) stop ;;
+    restart) stop; start ;;
+    foxglove)
+        start
+        cat <<EOF
+Open Foxglove desktop -> Open connection -> Foxglove WebSocket:
+  ws://localhost:8765
+Import the layout using Layouts -> Import from file:
+  $REPO/foxglove/tsp05_layout.json
+EOF
+        ;;
+    logs) tail -n 80 -f "$LOGFILE" ;;
+    check|watch|mode|servo|step|dc|dcpos|dctest|safety|calibrate|potcal)
+        start
+        source_ros
+        exec ros2 run tsp05_bridge tsp05 "$cmd" "$@" ;;
+    measure)
+        source_ros
+        exec python3 "$REPO/tools/sensor_validation.py" record "$@" ;;
+    plot) exec python3 "$REPO/tools/sensor_validation.py" plot "$@" ;;
+    help|-h|--help) usage ;;
+    *) usage; die "Unknown command: $cmd" ;;
+esac

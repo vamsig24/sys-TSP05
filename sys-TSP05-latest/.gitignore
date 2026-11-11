@@ -1,0 +1,11 @@
+ros2_ws/build/
+ros2_ws/install/
+ros2_ws/log/
+__pycache__/
+*.py[cod]
+.tools/
+
+.tsp05_native.pid
+.tsp05_native.log
+calibration/error_report.md
+calibration/*.png
