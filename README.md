@@ -1,231 +1,180 @@
-# sys-TSP05: Sensors & Motor Control
+# TSP05: Sensors & Motor Control
 
-An Arduino Uno reads every sensor and drives the motors. A ROS 2 node bridges it over USB serial, and Foxglove is the dashboard.
+One Arduino Uno sketch reads four sensors and drives three motors (RC servo, stepper, encoder DC motor). A ROS 2 Humble bridge on the laptop talks to the Uno over USB serial, and a Foxglove dashboard shows sensor and motor state and sends motor commands.
 
-```
-sensors ─┐                    USB serial (JSON, 115200)            WebSocket :8765
-         ├─ Arduino Uno ◄──────────────────────────► tsp05_bridge ◄──► foxglove_bridge ◄──► Foxglove
-motors ◄─┘  (sys-TSP05.ino)                          (ROS 2 Humble, in the f1tenth container)
-```
+The final demo code is in [`sys-TSP05-latest/`](sys-TSP05-latest/). Detailed run instructions, the rubric checklist and fix notes are in:
 
-## Hardware and mapping
-
-This follows the TSP05 demo-flow diagram, adapted to the hardware on the bench:
-
-| Diagram | On the bench | Pin | Sensor mode drives |
-|---|---|---|---|
-| FSR (force) | Flex sensor as the force sensor (5V–flex–A0–10k–GND) | A0 | **Servo**: force 0–100 % (calibrated straight → fully bent, saved in EEPROM) → 0–180°, with median + EMA filter, 10° deadzone and 5° deadband (from `vamsi/servo-flex-integrated`) |
-| Omron slot sensor | Potentiometer | A2 | **Stepper**: 0–100 % → 0–360°, 3° deadband |
-| VL53L1X | VL53L1X | I2C (A4/A5) | **DC motor** target speed: ≤10 cm → 0, 10–100 cm → 20–50 RPM (linear) |
-| VL53L5CX (safety) | Sharp GP2Y0A21 IR (no VL53L5CX) | A1 | **Safety stop**: obstacle closer than 20 cm stops all motors |
-| Hardware button | Push button to 5V, pull-down | 2 | GUI ↔ SENSOR mode toggle (debounced) |
-| RC servo | Servo | 10 | |
-| Stepper (EasyDriver) | Stepper | STEP 12, DIR 13 | |
-| DC motor + encoder | DC motor (L298) with encoder, PI speed control | ENA 6, IN1 8, IN2 7, enc A 3, enc B 4 | |
-
-The DC motor's encoder A must be on an interrupt pin (2 or 3 on the Uno). Pin 2 is the button, so encoder A is on 3 and B on 4. Set `DC_MOTOR_CONNECTED = false` in `sys-TSP05.ino` to run without the motor.
-
-### DC motor notes
-
-- **Measured speed range:** the motor needs about PWM 140 to start, runs at about 20 RPM (PWM 80) to 50 RPM (PWM 160+), and doesn't go much faster. That is why the ToF range maps to 20–50 RPM. Targets under about 20 RPM may stall.
-- **Speed control:** feedforward (`PWM = 30 + 1.1·RPM`, from the measured curve) plus PI. From standstill the output ramps up until the motor breaks away. The constants are in `DcMotor.h`.
-- **Stall protection:** if it is driven at PWM ≥ 200 and the encoder sees no motion for 1.5 s, the output is cut. The firmware sends a `dc_stall` event and Foxglove shows *STALLED*. A new `DC` command, stopping, or reversing clears it.
-- **Polarity:** positive PWM must read as positive RPM, or the speed loop runs away. `scripts/tsp05 dctest` spins the motor, asks if it turned forward, and saves the motor/encoder inversion on the Arduino (EEPROM). It then checks the speed loop at +30, −30 and 0 RPM.
-
-### Modes
-
-- **GUI** (the default at power-on): motors only move on commands from ROS 2 / Foxglove.
-- **SENSOR**: motors follow the sensors as in the table above.
-- To switch, press the hardware button or publish to `/tsp05/cmd/mode`.
-- **Safety:** in both modes, an obstacle in front of the Sharp sensor closer than the threshold, for 2 readings in a row, stops all motors and blocks motor commands. It releases after 0.5 s with no obstacle. A threshold of `0` disables it.
-
-## Pinout
-
-![TSP05 Arduino Uno wiring](docs/pinout.svg)
-
-| Arduino pin | Connected to | Notes |
-|---|---|---|
-| **D0 / D1** | USB serial | ROS 2 link at 115200 baud. Don't use these for anything else. |
-| **D2** | Push button (mode toggle) | Button to 5V, 10 kΩ pull-down to GND; pressed = HIGH. |
-| **D3** | DC encoder channel A | Interrupt pin; counts rising edges. |
-| **D4** | DC encoder channel B | Read on each A edge for the direction. |
-| **D6** | DC driver ENA (PWM) | Speed. Motor power from the driver's own supply, GND common. |
-| **D7** | DC driver IN2 | Direction. |
-| **D8** | DC driver IN1 | Direction. |
-| **D10** | Servo signal | Servo V+ to 5V (use an external 5V supply if the board resets when it moves), GND common. |
-| **D12** | Stepper driver STEP | EasyDriver. Motor power from its own supply. |
-| **D13** | Stepper driver DIR | The on-board LED flickers with the direction; that's normal. |
-| **A0** | Flex sensor (force sensor) | Voltage divider: 5V – flex – **A0** – 10 kΩ – GND. |
-| **A1** | Sharp GP2Y0A21 IR, Vo | Vcc 5V, GND. A 10 µF capacitor across Vcc/GND is recommended. |
-| **A2** | Potentiometer wiper | Outer legs to 5V and GND. |
-| **A4 (SDA)** | VL53L1X SDA | I2C. These are the same pins as the SDA/SCL pins next to AREF. |
-| **A5 (SCL)** | VL53L1X SCL | Power the breakout as its board requires (most have a regulator and take 5V). |
-| 5V / GND | Sensor supplies | All grounds must be common: Arduino, servo supply, stepper driver, sensors. |
-| **Free** | D5, D9, D11, A3 | D9 and D10 can't do `analogWrite` PWM (the Servo library uses Timer1). |
-
-The diagram is generated from `docs/make_pinout.py`. Edit it and run `python3 docs/make_pinout.py` if the wiring changes.
-
-## How to test
-
-1. Close the Arduino IDE **Serial Monitor**, because it blocks the port.
-2. In a terminal on your laptop (not inside Docker), go to the repo:
-   ```bash
-   cd ~/sys_eng/sensors_motors/sys-TSP05
-   ```
-3. **Once:** calibrate the force (flex) sensor. Follow the prompts: hold it straight and press Enter, then bend it fully and press Enter.
-   ```bash
-   scripts/tsp05 calibrate
-   ```
-4. Test everything. Follow the prompts; it ends with a PASS/FAIL summary.
-   ```bash
-   scripts/tsp05 check
-   ```
-
-**The servo only follows the flex sensor in SENSOR mode.** Switch with the hardware button, the Foxglove *SENSOR mode* button, or `scripts/tsp05 mode sensor`.
-
-### Foxglove dashboard
-
-```bash
-scripts/tsp05 foxglove
-```
-
-This starts everything and opens Foxglove. In Foxglove:
-1. *Open connection → Foxglove WebSocket → `ws://localhost:8765`*.
-2. **First time only:** *Layouts* menu (top left) → *Import from file* → `foxglove/tsp05_layout.json`.
-
-The layout follows the design image:
-- **Left:** mode and safety indicators, *GUI mode* / *SENSOR mode* buttons. Tabs hold the motor controls (servo angle, stepper ±15° or any angle, DC speed) and force-sensor calibration buttons. The Arduino's replies are shown below, so you can see when a command was rejected.
-- **Middle:** live gauges for force, potentiometer, both distance sensors, servo, stepper, DC target and measured speed, a DC stall light and the button.
-- **Right:** force sensor raw vs filtered, flex transfer function (bend angle vs ADC), distances with the safety threshold, motor positions, DC target vs measured speed, and VL53L1X distance → DC speed (XY).
-
-To edit the layout, change `foxglove/make_layout.py` and run it again.
-
-### Other commands
-
-| Command | When |
-|---|---|
-| `scripts/tsp05 flash` | after changing the Arduino code |
-| `scripts/tsp05 watch` | to see all readings live in the terminal (Ctrl+C to stop) |
-| `scripts/tsp05 stop` | to free the port for the Arduino IDE |
-| `scripts/tsp05 mode sensor` / `mode gui` | switch mode |
-| `scripts/tsp05 servo 90` / `step 15` / `dc 30` | move a motor (GUI mode only) |
-| `scripts/tsp05 dctest` | DC motor direction + speed-control test (**the motor spins**) |
-
-Everything below is reference detail; you don't need it to test.
+- [`sys-TSP05-latest/README.md`](sys-TSP05-latest/README.md): quick start, ROS topics, CLI commands
+- [`sys-TSP05-latest/NATIVE_HUMBLE.md`](sys-TSP05-latest/NATIVE_HUMBLE.md): native Ubuntu 22.04 / ROS 2 Humble setup
+- [`sys-TSP05-latest/FIXES_2026-11-11.md`](sys-TSP05-latest/FIXES_2026-11-11.md): final round of fixes against the rubric
+- [`sys-TSP05-latest/FLEX_POT_MAPPING_UPDATE.md`](sys-TSP05-latest/FLEX_POT_MAPPING_UPDATE.md): sensor-to-motor mapping details
 
 ---
 
-## Running manually (reference)
+## System overview
 
-### 1. Flash the Arduino
+```mermaid
+flowchart LR
+    subgraph Sensors
+        FLEX[Flex sensor<br/>A0, analog]
+        POT[Potentiometer<br/>A2, analog]
+        TOF[VL53L1X ToF<br/>I2C A4/A5]
+        SHARP[Sharp GP2Y0A21 IR<br/>A1, analog]
+        BTN[Pushbutton<br/>D2, debounced]
+    end
 
-Open `sys-TSP05.ino` in the Arduino IDE (needs the *SparkFun VL53L1X 4m Laser Distance Sensor* library) and upload it to the Uno. **Close the Serial Monitor afterwards**, because only one program can use the port.
+    subgraph UNO[Arduino Uno: single sketch]
+        LOOP[Non-blocking main loop<br/>sensor drivers, mode arbiter,<br/>safety interlock, serial protocol]
+    end
 
-### 2. Start the container
+    subgraph Motors
+        SERVO[HS-311 servo<br/>D10]
+        STEP[SM-42BYG011 stepper<br/>EasyDriver D12/D13]
+        DC[SPG30 DC + encoder<br/>L298 D6/D7/D8, enc D3/D4]
+    end
 
-```bash
-docker/f1_new_terminal.sh        # point the f1_new_terminal alias at this script
+    subgraph Laptop
+        NODE[tsp05_bridge<br/>ROS 2 serial node]
+        FOX[Foxglove dashboard<br/>ws://localhost:8765]
+    end
+
+    FLEX --> LOOP
+    POT --> LOOP
+    TOF --> LOOP
+    SHARP --> LOOP
+    BTN --> LOOP
+    LOOP --> SERVO
+    LOOP --> STEP
+    LOOP --> DC
+    LOOP <-->|USB serial| NODE
+    NODE <-->|topics| FOX
 ```
 
-The script builds the `f1tenth_tsp05` image (`f1tenth_gym_ros` plus `foxglove_bridge` and `pyserial`) and creates or starts the `f1tenth` container. The container gets:
-- host networking, so port 8765 reaches the host;
-- `/dev` with access to USB serial devices, so the Arduino can be re-plugged;
-- X11 and the GPU;
-- `~/sim_ws/src` mounted at `/sim_ws/src`, and this repo at `/tsp05`.
+The pinout diagram is at [`sys-TSP05-latest/docs/pinout.svg`](sys-TSP05-latest/docs/pinout.svg).
 
-To use it from the alias, update `~/.bashrc`:
+### Sensor to motor mapping (SENSOR mode)
 
-```bash
-alias f1_new_terminal='/home/vamsi/sys_eng/sensors_motors/sys-TSP05/docker/f1_new_terminal.sh'
-```
+| Sensor | Type | Physical output | Controls |
+|---|---|---|---|
+| Flex sensor (A0) | Analog, voltage divider with 10 kΩ | Bend angle (deg), calibrated straight/bent endpoints in EEPROM | Servo, 0–180° |
+| Potentiometer (A2) | Analog | Shaft angle (deg), calibrated ADC endpoints in EEPROM | Stepper, absolute 0–360° |
+| VL53L1X ToF (I2C) | Digital | Distance (cm) | DC motor speed: 10 cm → stop, 100 cm → 50 RPM |
+| Sharp GP2Y0A21 IR (A1) | Analog | Distance (cm), 10–80 cm | Safety interlock: stops all motors when something is closer than 20 cm |
+| Pushbutton (D2) | Digital, not counted as a sensor | Debounced press count | Toggles GUI ↔ SENSOR mode |
 
-### 3. Build and launch (inside the container)
+In **GUI mode** the Foxglove panels command servo absolute angle, stepper relative angle (±deg, rounded to the nearest microstep, and the actual angle moved is reported back), DC signed RPM and DC relative position (±deg). In **SENSOR mode** GUI motor commands are rejected and acknowledged as such on `/tsp05/events`. The mode can be switched from the debounced button or the GUI mode buttons.
 
-```bash
-source /opt/ros/humble/setup.bash
-cd /tsp05/ros2_ws
-colcon build --symlink-install
-source install/setup.bash
-ros2 launch tsp05_bridge tsp05.launch.py
-```
+### Filtering
 
-Launch arguments:
+- **Flex:** 5-sample median followed by an EMA. Foxglove plots raw ADC next to filtered ADC (`/tsp05/sensors/flex/adc_raw` vs `adc_filtered`).
+- **Sharp IR:** median of 25 ADC reads every 50 ms, then an EMA on distance (α = 0.35), plus spike rejection. A jump of more than 12 cm is ignored unless 3 consecutive readings agree within 8 cm.
+- **Servo command deadband:** 8° deadband, two agreeing samples in a row and 180 ms minimum between writes, so a stationary flex sensor does not make the servo chatter.
 
-| Argument | Default | Notes |
-|---|---|---|
-| `port` | `/dev/ttyACM0` | Arduino serial device |
-| `baud` | `115200` | |
-| `initial_mode` | `''` | `GUI` or `SENSOR` to set on connect; empty keeps the board's current mode |
-| `safety_threshold_cm` | `-1.0` | `<0` keeps the firmware default (20 cm); `0` disables the safety stop |
-| `foxglove` | `true` | also start `foxglove_bridge` |
-| `foxglove_port` | `8765` | |
+---
 
-### 4. Foxglove
+## Individual contributions
 
-Open Foxglove → *Open connection* → *Foxglove WebSocket* → `ws://localhost:8765`.
+Commit hashes refer to commits in this repository (see `git log --all`).
 
-Suggested panels (as in section 6 of the diagram):
+### Lukas Hann: DC motor driver and modular firmware structure
+*Branches: `dc-motor`, `force-resistor`, `integrated`*
 
-| Panel | Topic(s) |
-|---|---|
-| Publish (mode buttons) | `/tsp05/cmd/mode` `std_msgs/String`: `{"data": "GUI"}` / `{"data": "SENSOR"}` / `{"data": "TOGGLE"}` |
-| Publish (servo) | `/tsp05/cmd/servo_angle` `std_msgs/Float32`: `{"data": 90}` |
-| Publish (stepper) | `/tsp05/cmd/stepper_delta` `std_msgs/Float32`: `{"data": 15}` (relative °) |
-| Publish (DC) | `/tsp05/cmd/dc_rpm` `std_msgs/Float32` |
-| Indicator | `/tsp05/mode`, `/tsp05/safety/active`, `/tsp05/connected` |
-| Plot: flex raw vs filtered | `/tsp05/sensors/flex/adc_raw.data`, `/tsp05/sensors/flex/adc_filtered.data` |
-| Plot: distances | `/tsp05/sensors/tof/distance_cm.data`, `/tsp05/sensors/sharp/distance_cm.data` |
-| Gauge | `/tsp05/sensors/flex/angle_deg`, `/tsp05/sensors/pot/angle_deg`, `/tsp05/motors/servo/angle_deg`, `/tsp05/motors/stepper/angle_deg` |
-| Raw Messages | `/tsp05/events` (acks, mode changes, safety stops), `/tsp05/state_json` |
+- **Open-loop DC motor control** (`e90bf0a`): first L298 sketch. Fixed PWM duty on ENA and a fixed direction on IN1/IN2.
+- **Encoder speed measurement and direction test** (`1379262`): quadrature encoder read with channel A on an interrupt (rising edge) and channel B sampled for direction, both with pull-ups. RPM is computed over 200 ms windows assuming 210 pulses per output revolution (7 PPR × 30:1 gearbox). The `direction-test` sketch adds a PI speed loop (Kp 1.0, Ki 1.5) with a 230 PWM cap and a 30-per-cycle PWM slew limit. We used it to check that positive PWM gives positive encoder counts.
+- **Flex sensor resistance readout** (`46ad89d`): reads the flex sensor in a 10 kΩ divider on A0 and converts the ADC value to resistance, R = 10 kΩ · (1023/ADC − 1).
+- **Split the firmware into per-device modules** (`8d21a6f`): `DCMotor` (encoder ISR, PI speed loop with slew limiting), `StepperMotor` (non-blocking STEP/DIR pulse generation timed with `micros()`, absolute and relative targets, 1600 microsteps/rev) and `FlexSensor` classes, each with `begin()`/`update()`, so every device runs from one non-blocking `loop()`. A unified `sys-TSP05.ino` test cycles all three motors every 4 s. DC PWM moved to D6 because the servo on D10 disables PWM on D9/D10. The later integration builds on this structure.
+- Did most of the bench debugging on the DC motor hardware (see Challenges).
 
-## ROS 2 interface (`tsp05_bridge`)
+### Vamsi Grandhi: system integration, ROS 2 bridge, Foxglove GUI, DC closed-loop control
+*Branches: `vamsi/servo-flex-integrated`, `integrated`, `integrated-test`*
 
-All topics are under `/tsp05` and use `std_msgs`. Invalid distances are published as NaN; check `.../ok` and `.../valid` for whether a value is usable.
+- **Flex sensor → servo** (`b0be4d5`): 5-sample median plus EMA (α = 0.15) on the flex ADC, converted to resistance and mapped linearly from 13 kΩ (straight) / 34 kΩ (max bend) to 0–180° servo. Includes a 10° deadzone at zero and a 5° write deadband. The servo uses D10, which kept DC PWM off D9/D10 because the Servo library disables PWM on those pins.
+- **Hardware integration** (`f47f150`): brought the team's individual sensor drivers into the single sketch: `Button`, `DistanceSensor` (VL53L1X), `Potentiometer`, `SharpIRSensor`, with a shared, non-blocking update schedule.
+- **Integrated logic and GUI** (`2ebb3b5`, about 3,100 lines): GUI/SENSOR mode arbitration and the Sharp safety interlock in the sketch. Also the `tsp05_bridge` ROS 2 package: `protocol.py` (line-based serial protocol parse/format), `serial_node.py` (publishes sensor and motor state topics, subscribes to command topics), `cli.py` and `scripts/tsp05` (flash, build, start, watch and calibration commands), the launch file, and `foxglove/make_layout.py`, which generates the dashboard JSON.
+- **DC speed control** (`fadf5d9`, `57f7709`, `0db6817`): the open-loop polarity test was ported into the CLI (`scripts/tsp05 dctest`). Added a feedforward term `pwm = sign·(30 + 1.1·|rpm|)` to get past the friction deadband, a PI loop on encoder RPM, and a position outer loop that requests signed RPM until the encoder angle is within tolerance. Also added the ToF → DC speed mapping and a characterization script (`scripts/analyze_characterization.py`) that fits the PWM-vs-RPM response.
+- **Stall protection**: if PWM stays ≥ 200 for 1.5 s with no encoder motion, `DcMotor` cuts the output and publishes `/tsp05/motors/dc/stalled`. This was added after the motor problems described below.
 
-**Published**
+### Shubham Vetal: Sharp IR, potentiometer, first ROS 2 GUI, final rubric fixes
+*Branches: `sharp_sensor`, `potentiometer`, `ros2_interface`, `issues_fixed`*
 
-| Topic | Type | |
-|---|---|---|
-| `mode` | String | `GUI` / `SENSOR` |
-| `connected` | Bool | receiving data from the Arduino |
-| `safety/active`, `safety/threshold_cm` | Bool, Float32 | |
-| `sensors/flex/{adc_raw, adc_filtered, resistance_kohm, force_pct, bend_deg, cal_flat_kohm, cal_bent_kohm}` | Float32 | |
-| `sensors/flex/transfer` | geometry_msgs/Point | x = bend angle deg, y = filtered ADC, z = resistance kOhm (for the transfer function XY plot) |
-| `sensors/pot/{adc_raw, voltage, position_pct, angle_deg}` | Float32 | |
-| `sensors/flex/angle_deg` | Float32 | bend angle from resistance (protocol.py model) |
-| `sensors/tof/ok`, `sensors/tof/distance_cm` | Bool, Float32 | VL53L1X |
-| `sensors/sharp/{voltage, distance_cm}`, `valid`, `status` | Float32, Bool, String | |
-| `button/pressed`, `button/count` | Bool, Int32 | |
-| `motors/servo/angle_deg`, `motors/stepper/{angle_deg, target_deg}` | Float32 | |
-| `motors/dc/{connected, target_rpm, rpm, pwm}` | Bool, Float32 | |
-| `motors/dc/polarity`, `motors/dc/stalled` | Int32, Bool | polarity bit0 = motor inverted, bit1 = encoder inverted |
-| `motors/dc/transfer` | geometry_msgs/Point | x = VL53L1X cm, y = target RPM, z = measured RPM (for the XY plot) |
-| `events` | String | JSON acks / events from the Arduino |
-| `state_json` | String | full state line (10 Hz) |
+- **Sharp GP2Y0A21 interface** (`dc73dbb`): uses the SharpIR library (model 1080) to convert to distance in cm. Readings are classified as VALID, TOO_CLOSE, TOO_FAR or INVALID_READING against the 10–80 cm range and streamed as one JSON object per line.
+- **Potentiometer interface** (`8b0a733`): 10-sample moving-average filter on the wiper ADC, raw and filtered voltages, and position as a percentage, reported every 100 ms.
+- **First ROS 2 GUI over serial** (`1ec7c0e`): the `sharp_ir_test` ROS 2 package. A serial node parses the Arduino's JSON lines (`protocol.py`, with unit tests) and publishes them as topics, alongside a launch file and Foxglove panel notes. This set the JSON-over-serial architecture that the integrated bridge kept.
+- **Rubric fixes** (`ad5b2c5`, documented in `FIXES_2026-11-11.md` and `FLEX_POT_MAPPING_UPDATE.md`):
+  - *DC position anti-hunt latch:* arrival is checked every loop iteration instead of only every 200 ms RPM sample. PWM stops when the angle enters the ±3° band, and completion latches so the controller no longer reverses back and forth across the target.
+  - *Sharp spike filter:* EMA plus the persistent-step confirmation described above. The filtered distance also drives the safety interlock, so a single outlier no longer trips it.
+  - *One sensor per motor:* endpoint mappings with EEPROM-stored calibration (`POTCAL MIN/MAX`, flex `FLAT/BENT`), and `SensorMapping.h` with the servo deadband/hysteresis logic.
+  - *Simplified Foxglove layout* and live mapping telemetry topics (`/tsp05/mapping/*`).
+  - *Host-side tests:* mock Arduino headers, `tools/firmware_syntax_check.sh`, simulated DC-arrival and Sharp-spike tests (`tools/tests/`) and protocol tests, so changes can be checked without hardware. `tools/sensor_validation.py` records sensor readings against ruler/protractor references and produces the transfer-function plot and the per-sensor error report.
 
-**Subscribed** (commands)
+### Kaushal Jadhav: stepper motor
+*Branch: `stepper-motor`*
 
-| Topic | Type | |
-|---|---|---|
-| `cmd/mode` | String | `GUI`, `SENSOR`, `TOGGLE` |
-| `cmd/servo_angle` | Float32 | 0–180°, GUI mode only |
-| `cmd/stepper_delta` | Float32 | relative degrees, GUI mode only |
-| `cmd/dc_rpm` | Float32 | −100…100, GUI mode only |
-| `cmd/dc_pwm` | Float32 | open-loop test PWM −230…230, GUI mode only, stops after 2 s |
-| `cmd/dc_polarity` | String | `"<motor 0/1> <encoder 0/1>"`, saved on the Arduino |
-| `cmd/safety_threshold` | Float32 | cm, `0` disables |
-| `cmd/flex_calibrate` | String | `FLAT`, `BENT`, `RESET` |
+- **Stepper bring-up test** (`fa0d6fd`): drives the SM-42BYG011 through the EasyDriver (STEP/DIR) one full revolution each way to confirm coil pairing and microstep count. The handout warns that the datasheet colour coding is wrong, so this test was needed.
+- **Serial angle control** (`090d682`): accepts a signed angle over serial, converts it to microsteps (1600 microsteps/rev, i.e. 200 full steps × 8), rounds to the nearest achievable step and reports the actual angle moved. This logic became `StepperMotor`'s relative-move command and the `last_actual_delta_deg` topic.
+- **Stepper integration** (co-author of `8d21a6f`, `2ebb3b5`, `ad5b2c5`): helped turn the stepper test code into the non-blocking `StepperMotor` class, wire the potentiometer → stepper SENSOR-mode mapping and STEP command into the unified firmware, and the final calibrated pot → stepper 0–360° mapping.
 
-Commands sent in the wrong mode, or while the safety stop is active, are rejected. The reason appears on `/tsp05/events` and in the node log.
+### Ashutosh Kumar: VL53L1X time-of-flight sensor
+*Branch: `feature/vl53l1x-distance`*
 
-## Serial protocol
+- **VL53L1X distance test** (`82ca2b4`, `e49512b`): SparkFun VL53L1X library over I2C (A4/A5) in long-distance mode with a 100 ms timing budget. Reports range in mm and cm, stops with an error if the sensor is not detected, and recovers if a reading times out after 1 s. The first commit went to the wrong path; it was reverted (`ed91d91`) and re-added correctly. This code became `DistanceSensor.{h,cpp}`, which drives the DC motor speed in SENSOR mode.
+- **VL53L1X integration** (co-author of `f47f150`, `2ebb3b5`, `fadf5d9`, `ad5b2c5`): helped build the non-blocking `DistanceSensor` wrapper (poll interval, timeout flag), the ToF → DC speed mapping in SENSOR mode, and its final 10–100 cm → 0–50 RPM form.
 
-The Arduino sends one JSON object per line, with `"t"` set to `boot`, `state` (10 Hz), `ack` or `event`. The host sends text commands:
-`MODE GUI|SENSOR|TOGGLE`, `SERVO <deg>`, `DC <rpm>`, `STEP <deg>`, `SAFETY <cm>`, `CAL FLAT|BENT|RESET`, `DCPWM <pwm>`, `DCPOL <m> <e>`.
-The parser and command formatting are in `ros2_ws/src/tsp05_bridge/tsp05_bridge/protocol.py`.
+---
 
-Protocol unit tests (no ROS or hardware needed):
+## Challenges
 
-```bash
-cd ros2_ws/src/tsp05_bridge && python3 -m pytest test
-```
+### 1. The DC motor kept stalling at random, even when powered directly from the bench supply
+
+This took most of our debugging time and we did not fully solve it.
+
+**Symptom.** The SPG30 gear motor ran, but it would stop at random moments and stay stopped while still drawing **several amps**. When it was running, we measured its PWM-to-RPM curve and fitted the feedforward to it: about PWM 65 for 30 RPM, saturating near 115 RPM (see `57f7709`). After a stall it often would not start again by itself. Forcing the rotor around with **pliers** sometimes got it running again, but not reliably, and it would stall again later.
+
+At first we suspected our control code: PWM too low to overcome friction (the handout warns about the deadband), the PI integrator winding up, wrong L298 wiring, or a bad encoder sign. Then we took the controller out entirely and connected the motor **straight to the bench power supply**. It behaved the same way: it ran for a while, then stopped and drew high current.
+
+**What we tried:**
+- **Bypassing the electronics.** Connecting directly to the supply rules out the Arduino, the L298, the PWM frequency, our feedforward and PI code, and the wiring between them. A healthy DC motor across a supply at its rated voltage does not stop at random.
+- **Forcing the rotor.** Turning the shaft with pliers while powered sometimes got it spinning again. That tells us the stall depends on the rotor's angle or on something mechanical that a push can break free.
+- **Swapping motors.** We tried several motors and saw the same behaviour, so it was not a single bad unit.
+- **Removing the gearbox.** We took the gearbox off to check whether the gear train was jamming. The bare motor still stalled, so the gearbox is not the main cause.
+
+**Analysis.** A DC motor draws its largest current when the rotor is not turning, because there is no back-EMF to oppose the supply voltage (I = V/R). A motor drawing amps while stopped is electrically in a stall. Either the rotor is mechanically held, or the current flows through a path that produces little torque. Three observations point to the motor itself, not our control: the motor ran sometimes, it stopped even without our electronics, and a mechanical push could restart it. Likely causes:
+- **Binding at certain rotor positions:** a worn or dry bushing, debris in the air gap, or a loose magnet rubbing the armature at some angles. The rotor runs until it reaches the tight spot and then sticks, and the pliers free it. This matches our impression that something inside was seizing up.
+- **Shorted commutator segments or winding:** if the brushes stop on a pair of shorted segments, current goes through the short and produces almost no torque, so the motor sits there drawing amps. Nudging the rotor moves the brushes off the bad segments, which matches the pliers sometimes working. Brush wear or carbon dust between segments can cause this.
+- **A short through the encoder board:** on the SPG30 the encoder PCB is soldered across the back of the motor next to the motor terminals. A marginal solder bridge or damaged board could load the supply. This explains the high current, but explains the angle-dependent stalls less well.
+
+Several kit motors behaved the same way, so these units may have been worn or damaged before (for example run at stall or over voltage in earlier semesters) instead of all failing independently.
+
+**What we would do next / suggested fixes:**
+1. With the motor disconnected, **turn the bare shaft slowly through a full revolution by hand** and feel for a tight spot. Mark where it binds and check whether it stalls at the same angle when powered.
+2. **Measure terminal resistance while rotating the shaft by hand** in small steps. A position where resistance drops sharply points to shorted commutator segments. Compare against a known good motor.
+3. **Disconnect or inspect the encoder board** and repeat the direct-supply test to rule out a short through it.
+4. Open the motor if allowed: **clean the commutator and check brush wear**, and look for debris or a loose magnet.
+5. Set a **current limit on the bench supply** for every motor test. This protects the motor from overheating while stalled, and overheating makes the damage worse.
+6. Ask the TAs for a motor from a different batch and check it with steps 1–3 before connecting it to our circuit.
+
+**Effect on the project.** When the motor ran, the closed-loop speed control behaved as designed. The random stalls made it unreliable to tune and demonstrate, especially the position control and the anti-hunt latch. We also tested that logic with the host-side simulations in `tools/tests/`. The stalls shaped the firmware in two ways:
+- a **breakaway ramp:** while the encoder shows no motion, the PWM ramps up 15 counts per sample to push through a sticking point
+- **stall detection:** if PWM stays ≥ 200 for 1.5 s with no encoder pulses, the output is cut, so a seized motor is not driven at high current indefinitely, and the GUI shows a STALLED indicator
+
+### 2. Servo library vs. PWM pins
+
+On the Uno, the `Servo` library uses Timer1, which disables hardware PWM on D9 and D10. With the servo on D10, the L298 enable pin had to go on a pin driven by a different timer (D6, Timer0). We checked this against the handout before wiring, which saved us from a confusing "PWM does nothing" bug.
+
+### 3. Sharp IR noise falsely tripping the safety interlock
+
+The raw Sharp distance had occasional large spikes, for example when a target edge or a reflective surface passed through the beam. Because the Sharp drives the safety stop, a single spike could stop every motor. A median filter alone was not enough because the spikes sometimes lasted more than one sample. We added an EMA on distance and a step-confirmation rule: jumps larger than 12 cm are accepted only after 3 consecutive readings agree within 8 cm. This rejects spikes but still reacts to a real object within about 150 ms. The trade-off is slightly slower safety response, which is acceptable for a lab demo but would not be for a real e-stop.
+
+### 4. DC position control hunting around the target
+
+The first position loop checked arrival only once per 200 ms RPM sample and enforced a 20 RPM minimum near the target. The motor overshot, the controller reversed, overshot again and oscillated. We now check arrival every loop iteration, stop PWM as soon as the encoder enters the ±3° band, latch completion so it never commands a reverse correction, and lowered the minimum approach speed to 8 RPM. With the L298 at 0 PWM the motor coasts instead of braking, so some overshoot from inertia remains. Active braking (both IN pins high) would reduce it.
+
+### 5. Servo chatter from a stationary flex sensor
+
+Even after filtering, small fluctuations in the flex reading caused the servo to twitch when the sensor was held still. We added an 8° command deadband, required two consecutive samples in the same direction before moving, and rate-limited servo writes to one every 180 ms. Hysteresis at 0° and 180° keeps the servo from jittering at the end stops. Some remaining twitch came from servo supply noise, which software cannot fix. A separate regulated 5–6 V supply with a common ground made the biggest difference.
+
+---
+
+## Using these sensors and motors in our project
+
+*(Covered live in the presentation.)* The ToF and Sharp IR sensors are suited to obstacle and proximity detection and to safety interlocks. The flex sensor and potentiometer work as joint-angle feedback or user input devices. The architecture (one non-blocking microcontroller loop, a serial bridge to ROS 2, mode arbitration between operator and autonomous control, and a sensor-driven safety stop) carries over directly to the project's motion subsystems.
